@@ -14,24 +14,20 @@
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+import { ng, idiom as lang, template, notify, http } from 'entcore/entcore';
+import { _ } from 'entcore/libs/underscore/underscore';
+import { moment } from 'entcore/libs/moment/moment';
+import { $ } from 'entcore/libs/jquery/jquery'
 
-routes.define(function($routeProvider) {
-	$routeProvider
-		.when('/folder/:folderId', {
-			action: 'viewFolder'
-		})
-		.when('/shared/folder/:folderId', {
-	  		action: 'viewSharedFolder'
-		})
-		.when('/shared', {
-		  	action: 'openShared'
-		})
-		.otherwise({
-		  	redirectTo: '/'
-		})
-});
+import { quota } from 'entcore/entcore';
+import { Workspace } from './model/workspace';
+import { Folder } from './model/folders';
+import { Document } from './model/documents';
+import { Mix } from 'toolkit';
 
-function Workspace($scope, date, notify, _, route, $rootScope, $timeout, template, model, lang){
+export let workspaceController = ng.controller('WorkspaceController', [
+	'$scope', 'route', '$rootScope', 'model', function ($scope, route, $rootScope, model){
+
 
 	route({
 		viewFolder: function(params){
@@ -130,18 +126,14 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 	$scope.folder = { children: [ { name: 'documents' }, { name: 'shared' }, { name: 'appDocuments' }, { name: 'trash', children: [] }] };
 	$scope.users = [];
 	$scope.me = model.me;
-
-	$scope.maxQuota = 8;
-	$scope.usedQuota = 4;
-
 	$scope.folderTreeTemplate = 'folder-content';
-	$scope.quota = model.quota;
+	$scope.quota = quota;
 
 	$scope.maxFileSize = parseInt(lang.translate('max.file.size'));
 
 	$scope.maxSize = function(){
-		var leftOvers = model.quota.max - model.quota.used;
-		if(model.quota.unit === 'gb'){
+		var leftOvers = quota.max - quota.used;
+		if(quota.unit === 'gb'){
 			leftOvers *= 1000;
 		}
 		return leftOvers;
@@ -163,8 +155,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 				(($scope.currentFolderTree.name !== 'trash' && doc.folder !== 'Trash') || ($scope.currentFolderTree.name === 'trash' && doc.folder === 'Trash'));
 		});
 		documents = documents.map(function(item){
-			item = new Document(item);
-			item.behaviours('workspace');
+			item = Mix.castAs(Document, item);
 			return item;
 		});
 
@@ -285,10 +276,8 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 	$scope.toTrashConfirm = function(url){
 		template.open('lightbox', 'confirm');
 		$scope.confirm = function(){
-			$scope.selectedDocuments().forEach(function(document){
-				http().put(url + "/" + document._id);
-			});
-			$scope.openedFolder.content = _.reject($scope.openedFolder.content, function(doc){ return doc.selected; });
+			$scope.openedFolder.toTrashSelection();
+			
 
 			notify.info('workspace.removed.message');
 			template.close('lightbox');
@@ -338,10 +327,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 			$scope.openedFolder.content = _.reject($scope.openedFolder.content, function(item){
 				return item === document;
 			});
-			http().delete('document/' + document._id)
-				.done(function(){
-					model.quota.sync();
-				})
+			http().delete('document/' + document._id);
 		});
 
 		$scope.selectedFolders().forEach(function(folder){
@@ -567,8 +553,9 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 			template.open('documents', 'icons');
 		}
 
-		$timeout(function(){
+		setTimeout(function(){
 			$('body').trigger('whereami.update');
+			$scope.$apply();
 		}, 100)
 
 		if(folder.folder && folder.folder.indexOf('Trash') === 0)
@@ -617,7 +604,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		$scope.newFile.chosenFiles.forEach(function(file, i){
 			var formData = new FormData();
 			var index = $scope.loadingFiles.length;
-			var loadingFile = {
+			var loadingFile: any = {
 				file: file.file,
 				loading: true
 			};
@@ -649,7 +636,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 						$scope.openFolder($scope.openedFolder.folder);
 					}
 
-					model.quota.sync();
+					quota.sync();
 				})
 				.e413(function(e){
 					$scope.loadingFiles.splice($scope.loadingFiles.indexOf(loadingFile), 1);
@@ -658,7 +645,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 				})
 				.e400(function(e){
 					$scope.loadingFiles.splice($scope.loadingFiles.indexOf(loadingFile), 1);
-					notify.error(lang.translate('file.too.large.max') + $scope.maxSize() + lang.translate(model.quota.unit));
+					notify.error(lang.translate('file.too.large.max') + $scope.maxSize() + lang.translate(quota.unit));
 					$scope.$apply();
 				});
 
@@ -682,7 +669,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 			return moment().format('D MMMM YYYY');
 		}
 
-		return date.format(dateString.split(' ')[0], 'D MMMM YYYY')
+		return moment().format(dateString.split(' ')[0], 'D MMMM YYYY')
 	}
 
 	$scope.shortDate = function(dateItem){
@@ -691,10 +678,10 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		}
 
 		if(typeof dateItem === "number")
-			return date.format(dateItem, 'L')
+			return moment().format(dateItem, 'L')
 
 		if(typeof dateItem === "string")
-			return date.format(dateItem.split(' ')[0], 'L')
+			return moment().format(dateItem.split(' ')[0], 'L')
 
 		return moment().format('L');
 	}
@@ -781,11 +768,10 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 	$scope.currentFolderTree = $scope.folder.children[0];
 	$scope.openFolder($scope.folder.children[0]);
 
-	var getFolders = function(tree, params, hook){
+	var getFolders = function(tree, params, hook?){
 		http().get('/workspace/folders/list', params).done(function(folders){
 			_.sortBy(folders, function(folder){ return folder.folder.split("_").length }).forEach(function(folder){
-				folder = new Folder(folder);
-				folder.behaviours('workspace');
+				folder = Mix.castAs(Folder, folder);
 				folder.created = folder.created.split('.')[0] + ':' + folder.created.split('.')[1].substring(0, 2)
 				if(folder.folder.indexOf('Trash') !== -1){
 					if(_.where($scope.folder.children[$scope.folder.children.length - 1].children, { folder: folder.folder }).length === 0){
@@ -905,7 +891,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		$scope.selectedFolder.folder = value;
 	};
 
-	function updateFolders(hook){
+	function updateFolders(hook?){
 		getFolders($scope.folder.children[0], { filter: 'owner' }, hook);
 	}
 
@@ -917,7 +903,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		template.close('lightbox');
 		var folderString = folderToString($scope.folder.children[0], targetFolders[0]);
 
-		var data = {};
+		var data: {path?: string} = {};
 		if(folderString !== ''){
 			data.path = folderString;
 		}
@@ -954,7 +940,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		template.close('lightbox');
 		var folderString = folderToString($scope.folder.children[0], target);
 
-		var data = {};
+		var data: { path?: string } = {};
 		if(folderString !== ''){
 			data.path = folderString;
 		}
@@ -1003,7 +989,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 				});
 			}
 			$scope.selectedFolders().forEach(function(folder){
-				var param = { name: folder.name };
+				var param:{ name: string, path?: string} = { name: folder.name };
 				if(folderString !== ''){
 					param.path = folderString;
 				}
@@ -1104,7 +1090,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 			var splitList = file.name.split('.');
 			var extension = splitList[splitList.length - 1];
 
-			var newFile = { file: file, name: file.name.split('.' + extension)[0] };
+			var newFile: {file: any, name: string, extension?: string} = { file: file, name: file.name.split('.' + extension)[0] };
 			if($scope.newFile.name !== ''){
 				$scope.newFile.name = $scope.newFile.name + ', ';
 			}
@@ -1188,25 +1174,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 	}
 
 	//Given a data size in bytes, returns a more "user friendly" representation.
-	$scope.getAppropriateDataUnit = function(bytes){
-		var order = 0
-		var orders = {
-			0: lang.translate("byte"),
-			1: "Ko",
-			2: "Mo",
-			3: "Go",
-			4: "To"
-		}
-		var finalNb = bytes
-		while(finalNb >= 1024 && order < 4){
-			finalNb = finalNb / 1024
-			order++
-		}
-		return {
-			nb: finalNb,
-			order: orders[order]
-		}
-	}
+	$scope.getAppropriateDataUnit = quota.appropriateDataUnit;
 
 	$scope.formatDocumentSize = function(size){
 		var formattedData = $scope.getAppropriateDataUnit(size)
@@ -1249,7 +1217,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 							undefined
 
 			if(!dataField || targetItem.name === 'shared' || targetItem.name === 'appDocuments')
-				return false
+				return undefined
 
 			return dataField
 		}
@@ -1295,21 +1263,16 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		updateFolders(function(){
 			$scope.folderTreeTemplate = ''
 			$scope.$apply()
-			$timeout(function(){
+			setTimeout(function(){
 				$scope.folderTreeTemplate = 'folder-content'
-				$scope.openFolderById(backupId)
+				$scope.openFolderById(backupId);
+				$scope.$apply();
 			}, 10)
 		})
 	}
 
 	$scope.refreshHistory = function(doc, hook){
-		http().get("document/"+doc._id+"/revisions").done(function(revisions){
-			doc.revisions = revisions
-			if(typeof hook === 'function'){
-				hook()
-			}
-			$scope.$apply()
-		})
+		doc.refreshHistory(hook);
 	}
 
 	$scope.openHistory = function(document){
@@ -1341,7 +1304,7 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 		http().putFile("document/" + $scope.targetDocument._id + "?thumbnail=120x120&thumbnail=290x290", data, {requestName: 'add-revision'}).done(function(){
 			delete $scope.revisionInProgress;
 			$scope.openFolder($scope.openedFolder.folder);
-			model.quota.sync();
+			quota.sync();
 			template.close('lightbox');
 			//$scope.refreshHistory($scope.targetDocument);
 		}).e400(function(e){
@@ -1353,9 +1316,10 @@ function Workspace($scope, date, notify, _, route, $rootScope, $timeout, templat
 
 	$scope.deleteRevision = function(revision){
 		http().delete("document/"+revision.documentId+"/revision/"+revision._id).done(function(){
-			$('.tooltip').remove()
 			$scope.openHistory($scope.targetDocument)
-			model.quota.sync();
+			quota.sync();
 		})
 	}
-}
+
+	Folder.eventer.on('tree-changed', refreshFolders);
+}]);
