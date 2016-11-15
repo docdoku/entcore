@@ -98,13 +98,21 @@ gulp.task('copy-local-libs', () => {
             .pipe(gulp.dest('./node_modules/entcore'));
     streams.push(entcore);
 
+    var toolkit = gulp.src(gulp.local.paths.toolkit + '/src/**/*.ts')
+            .pipe(gulp.dest('./node_modules/toolkit'));
+    streams.push(toolkit);
+
     apps.forEach((app) => {
+        var toolkit = gulp.src(gulp.local.paths.toolkit + '/src/**/*.ts')
+            .pipe(gulp.dest('./' + app + '/src/main/resources/public/ts/toolkit'));
+
         var ts = gulp.src(gulp.local.paths.infraFront + '/src/ts/**/*.ts')
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/ts/entcore'));
 
         var html = gulp.src(gulp.local.paths.infraFront + '/src/template/**/*.html')
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/template/entcore'));
 
+        streams.push(toolkit);
         streams.push(ts);
         streams.push(html);
     });
@@ -138,9 +146,17 @@ gulp.task('update-libs', ['bower'], function(){
         var entcore = gulp.src('./bower_components/entcore/src/ts/**/*.ts')
             .pipe(gulp.dest('./node_modules/entcore'));
 
+        var toolkitDefs = gulp.src('./bower_components/toolkit/src/**/*.ts' )
+            .pipe(gulp.dest('./' + app + '/src/main/resources/public/ts/toolkit'));
+
+        var toolkit = gulp.src('./bower_components/toolkit/src/**/*.ts')
+            .pipe(gulp.dest('./node_modules/toolkit'));
+
         streams.push(html);
         streams.push(ts);
         streams.push(entcore);
+        streams.push(toolkit);
+        streams.push(toolkitDefs);
     });
         
     return merge(streams);
