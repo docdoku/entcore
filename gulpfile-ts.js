@@ -193,7 +193,7 @@ gulp.task('build', ['drop-temp'], function () {
     var streams = [];
     streams.push(updateRefs());
     apps.forEach((app) => {
-        var copyBehaviours = gulp.src('./' + app + '/src/main/resources/public/temp/behaviours.js')
+        var copyBehaviours = gulp.src('./' + app + '/src/main/resources/public/dist/behaviours.js')
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/js'));
         var copyWidgets = gulp.src('./src/main/resources/public/temp/widgets/*.js')
             .pipe(gulp.dest('./src/main/resources/public/js'));
@@ -208,7 +208,7 @@ gulp.task('build-local', ['webpack-entcore-local'], function () {
     var streams = [];
     streams.push(updateRefs());
     apps.forEach((app) => {
-        var copyBehaviours = gulp.src('./' + app + '/src/main/resources/public/temp/behaviours.js')
+        var copyBehaviours = gulp.src('./' + app + '/src/main/resources/public/dist/behaviours.js')
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/js'));
         var copyWidgets = gulp.src('./src/main/resources/public/temp/widgets/*.js')
             .pipe(gulp.dest('./src/main/resources/public/js'));
