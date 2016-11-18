@@ -39,7 +39,7 @@ function startEntCoreWebpack(isLocal) {
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/dist/entcore'))
             .pipe(rev())
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/dist/entcore'))
-            .pipe(rev.manifest({ merge: true }))
+            .pipe(rev.manifest('./' + app + '/rev-manifest.json', { merge: true }))
             .pipe(gulp.dest('./' + app));
         streams.push(entcoreWebpack);
     });
@@ -56,7 +56,7 @@ function startWebpack(isLocal) {
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/dist'))
             .pipe(rev())
             .pipe(gulp.dest('./' + app + '/src/main/resources/public/dist'))
-            .pipe(rev.manifest())
+            .pipe(rev.manifest('./' + app + '/rev-manifest.json', { merge: true }))
             .pipe(gulp.dest('./'));
         streams.push(appWebpack);
     });
