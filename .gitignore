@@ -25,6 +25,9 @@ dist
 **/ts/entcore
 **/template/entcore
 **/entcore-css-lib
+**/temp
+**/toolkit
+workspace/**/view
 data
 developer.id
 *.mod.json

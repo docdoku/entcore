@@ -22,7 +22,7 @@ import { $ } from 'entcore/libs/jquery/jquery'
 import { quota } from 'entcore/entcore';
 import { Workspace } from './model/workspace';
 import { Folder } from './model/folders';
-import { Document } from './model/documents';
+import { Document } from 'entcore/entcore';
 import { Mix } from 'toolkit';
 
 export let workspaceController = ng.controller('WorkspaceController', [
@@ -255,16 +255,6 @@ export let workspaceController = ng.controller('WorkspaceController', [
 		template.open('share', 'share-folders-warning');
 	};
 
-	var refreshFolders = function(){
-		var folder = $scope.openedFolder;
-		$scope.openedFolder = { folder: {} };
-
-		setTimeout(function(){
-			$scope.openedFolder = folder;
-			$scope.$apply('openedFolder');
-		}, 1);
-	};
-
 	$scope.deleteConfirm = function (url) {
 	    template.open('lightbox', 'confirm-delete');
 	    $scope.confirm = function () {
@@ -295,25 +285,15 @@ export let workspaceController = ng.controller('WorkspaceController', [
 			http().put(url + "/" + document._id)
 			$scope.openedFolder.content = _.reject($scope.openedFolder.content, function(doc){ return doc.selected; });
 		});
-
-		refreshFolders();
+        
 		notify.info('workspace.removed.message');
 	};
 
-	$scope.dragToTrash = function(item){
-
-		if(item.file){
-			http().put('/workspace/document/trash/' + item._id)
-			$scope.openedFolder.content = _.reject($scope.openedFolder.content, function(doc){ return doc._id === item._id; })
-		} else {
-			http().put('/workspace/folder/trash/' + item._id).done($scope.reloadFolderView)
-			$scope.openedFolder.folder.children = _.reject($scope.openedFolder.folder.children, function(folder){
-				return folder._id === item._id;
-			});
-		}
-
-		refreshFolders();
-		notify.info('workspace.removed.message');
+    $scope.dragToTrash = async (item) => {
+        let folder = $scope.openedFolder as Folder;
+        notify.info('workspace.removed.message');
+        await folder.trashItem(item);
+        $scope.reloadFolderView();
 	};
 
 	$scope.openMoveFileView = function(action){
@@ -931,7 +911,6 @@ export let workspaceController = ng.controller('WorkspaceController', [
 					var error = JSON.parse(e.responseText);
 					notify.error(error.error);
 					$scope.openedFolder.folder.children.push(folder);
-					refreshFolders();
 				});
 		})
 	};
@@ -958,7 +937,6 @@ export let workspaceController = ng.controller('WorkspaceController', [
 			$scope.openedFolder.folder.children = _.reject($scope.openedFolder.folder.children, function(child){
 				return child._id === origin._id;
 			});
-			refreshFolders();
 			http().put('/workspace/folder/move/' + origin._id, data)
 			.done(function(){
 				$scope.reloadFolderView()
@@ -967,7 +945,6 @@ export let workspaceController = ng.controller('WorkspaceController', [
 				var error = JSON.parse(e.responseText);
 				notify.error(error.error);
 				$scope.openedFolder.folder.children.push(origin);
-				refreshFolders();
 			});
 		}
 	};
@@ -1320,6 +1297,4 @@ export let workspaceController = ng.controller('WorkspaceController', [
 			quota.sync();
 		})
 	}
-
-	Folder.eventer.on('tree-changed', refreshFolders);
 }]);

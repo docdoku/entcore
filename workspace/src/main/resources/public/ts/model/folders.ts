@@ -17,7 +17,8 @@
 
 import { http, model, quota } from 'entcore/entcore';
 import { Mix, Selection, Selectable, Eventer } from 'toolkit';
-import { Document } from './documents';
+import { Document } from 'entcore/entcore';
+import { _ } from 'entcore/libs/underscore/underscore';
 
 export class FoldersCollection{
 	sel: Selection<Folder>;
@@ -60,11 +61,18 @@ export class Folder implements Selectable{
 	documents: DocumentsCollection;
 	_id: string;
     static eventer: Eventer;
+    children: Folder[];
 
 	constructor(data){
 		this.folders = new FoldersCollection();
 		this.documents = new DocumentsCollection();
-	}
+    }
+
+    trash(): Promise<any> {
+        return new Promise((resolve, reject) => {
+            http().put('/workspace/folder/trash/' + this._id).done(() => resolve());
+        });
+    }
 
 	toTrashSelection(){
 		this.documents.selection.forEach(function(document){
@@ -74,7 +82,19 @@ export class Folder implements Selectable{
 		this.documents.sel.removeSelection();
 
 		this.folders.trashSelection();
-	}
+    }
+
+    async trashItem(item: Document | Folder): Promise<any> {
+        await item.trash();
+        if (item instanceof Document) {
+            this.documents.all = _.reject(
+                this.documents.all, (doc) => doc._id === item._id
+            );
+        }
+        else {
+            this.children = _.reject(this.children, (folder) => folder._id === item._id);
+        }
+    }
 }
 
 Folder.eventer = new Eventer();
