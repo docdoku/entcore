@@ -100,6 +100,39 @@ encoder.mp3 = function(leftChannel, rightChannel, recordingLength, callback){
 	xhr.send(null);
 };
 
+encoder.chunk =function(leftChannel, rightChannel, recordingLength, callback){
+	var leftBuffer = mergeBuffers(leftChannel, recordingLength);
+	var rightBuffer = mergeBuffers(rightChannel, recordingLength);
+
+	var interleaved = interleave (leftBuffer, rightBuffer);
+
+	var buffer = new ArrayBuffer(interleaved.length * 2);
+    var view = new DataView(buffer);
+
+//	var view = new DataView(new ArrayBuffer(interleaved.length * 2));
+// write the PCM samples
+	var index = 0;
+	var volume = 1;
+	for(var i = 0; i < interleaved.length; i++){
+		view.setInt16(index, interleaved[i] * (0x7FFF * volume), true);
+		index += 2;
+	}
+
+	callback(new Uint8Array(buffer));
+
+//	var reader = new FileReader();
+//	var compressed = RawDeflate.deflate(view);
+//	console.log(compressed);
+//	reader.readAsDataURL(compressed);
+//	reader.onloadend = function() {
+//		callback(reader.result);
+//	}
+
+//	var compressed = deflate(interleaved);
+//	console.log(compressed);
+//	callback(compressed);
+};
+
 onmessage = function(e){
 	encoder[e.data[0]](e.data[1], e.data[2], e.data[3], function(blob){
 		postMessage(blob);

@@ -20,7 +20,7 @@
 package org.entcore.workspace;
 
 import org.entcore.common.http.BaseServer;
-import org.entcore.common.service.impl.MongoDbSearchService;
+import org.entcore.workspace.controllers.AudioRecorderHandler;
 import org.entcore.workspace.controllers.QuotaController;
 import org.entcore.workspace.dao.DocumentDao;
 import org.entcore.workspace.security.WorkspaceResourcesProvider;
@@ -61,6 +61,9 @@ public class Workspace extends BaseServer {
 		QuotaController quotaController = new QuotaController();
 		quotaController.setQuotaService(quotaService);
 		addController(quotaController);
+
+		vertx.createHttpServer().setMaxWebSocketFrameSize(1024*1024)
+				.websocketHandler(new AudioRecorderHandler(vertx, storage)).listen(6500);
 
 	}
 

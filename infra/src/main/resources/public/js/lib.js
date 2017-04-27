@@ -1681,6 +1681,8 @@ var recorder = (function(){
 	window.AudioContext = window.AudioContext || window.webkitAudioContext;
 
 	var context,
+		ws = null,
+		intervalId,
 		gainNode,
 		recorder,
 		player = new Audio();
@@ -1690,7 +1692,43 @@ var recorder = (function(){
 	var bufferSize = 4096,
 		loaded = false,
 		recordingLength = 0,
+		lastIndex = 0,
+		encoder = new Worker('/infra/public/js/audioEncoder.js'),
 		followers = [];
+
+	function uuid() {
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            var r = Math.random()*16|0, v = c == 'x' ? r : (r&0x3|0x8);
+            return v.toString(16);
+        });
+	}
+
+function sendWavChunk() {
+					var	index = rightChannel.length;
+					if (!(index > lastIndex)) return;
+					encoder.postMessage(['chunk', leftChannel.slice(lastIndex, index), rightChannel.slice(lastIndex, index), (index - lastIndex) * bufferSize]);
+                    			encoder.onmessage = function(e) {
+                    			var deflate = new Zlib.Deflate(e.data);
+                    				ws.send(deflate.compress());
+                    			};
+                    			lastIndex = index;
+					//var blob = encodeWav(leftChannel.slice(lastIndex, index), rightChannel.slice(lastIndex, index), (index - lastIndex) * bufferSize);
+
+//					var reader = new window.FileReader();
+//					reader.readAsDataURL(blob);
+//					reader.onloadend = function() {
+//						base64data = reader.result;
+//						ws.send(base64data);
+//					}
+				}
+
+	function closeWs() {
+		clearInterval(intervalId);
+		sendWavChunk();
+        ws.close();
+        ws = null;
+	}
+
 
 	function notifyFollowers(status, data){
 		followers.forEach(function(follower){
@@ -1708,6 +1746,7 @@ var recorder = (function(){
 			navigator.getUserMedia({
 				audio: true
 			}, function(mediaStream){
+
 				context = new AudioContext();
 				var audioInput = context.createMediaStreamSource(mediaStream);
 				gainNode = context.createGain();
@@ -1725,12 +1764,36 @@ var recorder = (function(){
 					if(this.status !== 'recording'){
 						return;
 					}
-					var left = e.inputBuffer.getChannelData (0);
-					leftChannel.push (new Float32Array(left));
-					var right = e.inputBuffer.getChannelData (1);
-					rightChannel.push (new Float32Array(right));
+					var left = new Float32Array(e.inputBuffer.getChannelData (0));
+					leftChannel.push (left);
+//					leftBufferChannel.push (left);
+					var right = new Float32Array(e.inputBuffer.getChannelData (1));
+					rightChannel.push (right);
+//					leftBufferChannel.push (left);
+//					bufferLength += bufferSize;
+//					var	bla = interleave(left, right);
+//					ws.send(bla);
+
 
 					recordingLength += bufferSize;
+
+//					var tmpLeftChannel = [];
+//					tmpLeftChannel.push (new Float32Array(left));
+//					var tmpRightChannel = [];
+//					tmpRightChannel.push (new Float32Array(right));
+//					var leftBuffer = mergeBuffers(tmpLeftChannel, recordingLength);
+//					var rightBuffer = mergeBuffers(tmpRightChannel, recordingLength);
+//					var interleaved = interleave (leftBuffer, rightBuffer);
+//					var blob = encodeWav(tmpLeftChannel, tmpRightChannel, bufferSize);
+//					var reader = new window.FileReader();
+//                     reader.readAsDataURL(blob);
+//                     reader.onloadend = function() {
+//						base64data = reader.result;
+//						ws.send(base64data);
+//                      }
+//					ws.send(interleaved);
+
+
 					this.elapsedTime += e.inputBuffer.duration;
 					notifyFollowers(this.status);
 				}.bind(this);
@@ -1746,6 +1809,7 @@ var recorder = (function(){
 			return navigator.getUserMedia !== undefined && window.AudioContext !==undefined;
 		},
 		stop: function(){
+			closeWs();
 			this.status = 'idle';
 			player.pause();
 			if(player.currentTime > 0){
@@ -1763,17 +1827,32 @@ var recorder = (function(){
 		},
 		record: function(){
 			player.pause();
-			if(player.currentTime > 0){
-				player.currentTime = 0;
-			}
+			var that = this;
+			if (ws) {
+				that.status = 'recording';
+				notifyFollowers(this.status);
+				if(!loaded){
+					that.loadComponents();
+				}
+				intervalId = setInterval(sendWavChunk, 200);
+			} else {
+				ws = new WebSocket("wss://one/audio/" + uuid());
+				ws.onopen = function () {
+					if(player.currentTime > 0){
+						player.currentTime = 0;
+					}
 
-			this.status = 'recording';
-			notifyFollowers(this.status);
-			if(!loaded){
-				this.loadComponents();
+					that.status = 'recording';
+					notifyFollowers(this.status);
+					if(!loaded){
+						that.loadComponents();
+					}
+					intervalId = setInterval(sendWavChunk, 200);
+				};
 			}
 		},
 		pause: function(){
+			clearInterval(intervalId);
 			this.status = 'paused';
 			player.pause();
 			notifyFollowers(this.status);
@@ -1795,6 +1874,7 @@ var recorder = (function(){
 		title: "",
 		status: 'idle',
 		save: function(callback, format){
+			ws.close();
 			this.stop();
 			this.status = 'encoding';
 			notifyFollowers(this.status);
