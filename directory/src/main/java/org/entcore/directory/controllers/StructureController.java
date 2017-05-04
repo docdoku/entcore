@@ -30,6 +30,8 @@ import fr.wseduc.webutils.http.BaseController;
 import fr.wseduc.webutils.http.Renders;
 
 import org.entcore.common.appregistry.ApplicationUtils;
+import org.entcore.common.http.filter.AdminFilter;
+import org.entcore.common.http.filter.ResourceFilter;
 import org.entcore.common.user.UserInfos;
 import org.entcore.common.user.UserUtils;
 import org.entcore.directory.pojo.Ent;
@@ -425,10 +427,26 @@ public class StructureController extends BaseController {
 
 	@Get("/structure/:structureId/metrics")
 	@SecuredAction(value = "", type = ActionType.RESOURCE)
-	public void metrics(final HttpServerRequest request){
+	public void metrics(final HttpServerRequest request) {
 		structureService.getMetrics(request.params().get("structureId"), defaultResponseHandler(request));
 	}
+	
+	@Get("/structure/:id/sources")
+	@ResourceFilter(AdminFilter.class)
+	@SecuredAction(value = "", type = ActionType.RESOURCE)
+	public void listSources(final HttpServerRequest request) {
+		String structureId = request.params().get("id");
+		this.structureService.listSources(structureId, arrayResponseHandler(request));
+	}
 
+	@Get("/structure/:id/aaffunctions")
+	@ResourceFilter(AdminFilter.class)
+	@SecuredAction(value = "", type = ActionType.RESOURCE)
+	public void listAafFunctions(final HttpServerRequest request) {
+		String structureId = request.params().get("id");
+		this.structureService.listAafFunctions(structureId, arrayResponseHandler(request));
+	}
+	
 	public void setStructureService(SchoolService structureService) {
 		this.structureService = structureService;
 	}
