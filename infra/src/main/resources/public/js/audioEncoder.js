@@ -109,8 +109,7 @@ encoder.chunk =function(leftChannel, rightChannel, recordingLength, callback){
 	var buffer = new ArrayBuffer(interleaved.length * 2);
     var view = new DataView(buffer);
 
-//	var view = new DataView(new ArrayBuffer(interleaved.length * 2));
-// write the PCM samples
+	// write the PCM samples
 	var index = 0;
 	var volume = 1;
 	for(var i = 0; i < interleaved.length; i++){
@@ -120,17 +119,6 @@ encoder.chunk =function(leftChannel, rightChannel, recordingLength, callback){
 
 	callback(new Uint8Array(buffer));
 
-//	var reader = new FileReader();
-//	var compressed = RawDeflate.deflate(view);
-//	console.log(compressed);
-//	reader.readAsDataURL(compressed);
-//	reader.onloadend = function() {
-//		callback(reader.result);
-//	}
-
-//	var compressed = deflate(interleaved);
-//	console.log(compressed);
-//	callback(compressed);
 };
 
 onmessage = function(e){

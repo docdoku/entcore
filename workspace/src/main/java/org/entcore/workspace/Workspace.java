@@ -26,6 +26,7 @@ import org.entcore.workspace.dao.DocumentDao;
 import org.entcore.workspace.security.WorkspaceResourcesProvider;
 import org.entcore.workspace.service.QuotaService;
 import org.entcore.workspace.service.WorkspaceService;
+import org.entcore.workspace.service.impl.AudioRecorderWorker;
 import org.entcore.workspace.service.impl.DefaultQuotaService;
 import org.entcore.workspace.service.impl.WorkspaceRepositoryEvents;
 import org.entcore.common.storage.Storage;
@@ -62,8 +63,11 @@ public class Workspace extends BaseServer {
 		quotaController.setQuotaService(quotaService);
 		addController(quotaController);
 
-		vertx.createHttpServer().setMaxWebSocketFrameSize(1024*1024)
-				.websocketHandler(new AudioRecorderHandler(vertx, storage)).listen(6500);
+		if (config.getInteger("wsPort") != null) {
+			container.deployWorkerVerticle(AudioRecorderWorker.class.getName(), config);
+			vertx.createHttpServer().setMaxWebSocketFrameSize(1024 * 1024)
+					.websocketHandler(new AudioRecorderHandler(vertx)).listen(config.getInteger("wsPort"));
+		}
 
 	}
 

@@ -20,8 +20,11 @@
 package org.entcore.workspace.controllers;
 
 import fr.wseduc.webutils.Server;
+import fr.wseduc.webutils.collections.PersistantBuffer;
 import fr.wseduc.webutils.data.ZLib;
 import fr.wseduc.webutils.request.CookieHelper;
+
+import static fr.wseduc.webutils.Utils.isNotEmpty;
 import static fr.wseduc.webutils.request.filter.UserAuthFilter.SESSION_ID;
 
 import net.sf.lamejb.*;
@@ -32,13 +35,17 @@ import org.entcore.common.bus.WorkspaceHelper;
 import org.entcore.common.storage.Storage;
 import org.entcore.common.storage.StorageFactory;
 import org.entcore.common.user.UserUtils;
+import org.entcore.workspace.service.impl.AudioRecorderWorker;
 import org.vertx.java.core.AsyncResult;
 import org.vertx.java.core.AsyncResultHandler;
 import org.vertx.java.core.Handler;
 import org.vertx.java.core.Vertx;
 import org.vertx.java.core.buffer.Buffer;
+import org.vertx.java.core.eventbus.EventBus;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.http.ServerWebSocket;
+import org.vertx.java.core.http.WebSocketFrame;
+import org.vertx.java.core.http.impl.ws.DefaultWebSocketFrame;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
 import org.vertx.java.core.logging.Logger;
@@ -48,21 +55,22 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+
 import com.sun.jna.Platform;
 
 public class AudioRecorderHandler implements Handler<ServerWebSocket> {
 
 	private static final Logger log = LoggerFactory.getLogger(AudioRecorderHandler.class);
+	private static final long TIMEOUT = 5000l;
 	private final Vertx vertx;
-	private final Map<String, Buffer> buffers = new HashMap<>();
-	private final Storage storage;
-	private final WorkspaceHelper workspaceHelper;
+	private final EventBus eb;
 
-	public AudioRecorderHandler(Vertx vertx, Storage storage) {
+	public AudioRecorderHandler(Vertx vertx) {
 		this.vertx = vertx;
-		this.storage = storage;
-		this.workspaceHelper = new WorkspaceHelper(vertx.eventBus(), storage);
+		this.eb = Server.getEventBus(vertx);
 	}
 
 	@Override
@@ -71,127 +79,95 @@ public class AudioRecorderHandler implements Handler<ServerWebSocket> {
 		String sessionId = CookieHelper.getInstance().getSigned(SESSION_ID, ws);
 		UserUtils.getSession(Server.getEventBus(vertx), sessionId, new Handler<JsonObject>() {
 			public void handle(final JsonObject infos) {
-				if(infos == null){
+				if (infos == null) {
 					ws.reject();
 					return;
 				}
 				final String id = ws.path().replaceFirst("/audio/", "");
-				log.info("id : " + id);
-				if (!buffers.containsKey(id)) {
-					ws.dataHandler(new Handler<Buffer>() {
-						@Override
-						public void handle(Buffer event) {
-							try {
-								final Buffer buf = buffers.get(id);
-								//final String base64 = event.toString("UTF-8").replaceFirst("data:(audio/wav)?;base64,", "");
-								//Buffer tmp = new Buffer(Base64.decode(base64));
-								Buffer tmp = new Buffer(ZLib.decompress(event.getBytes()));
-								////tmp = tmp.getBuffer(44, tmp.length());
-								if (buf != null) {
-									buf.appendBuffer(tmp);
-								} else {
-									buffers.put(id, tmp);
-								}
-							} catch (Exception e) {
-								log.error("Error receiving wav parts.", e);
-								ws.close();
-							}
-						}
-					});
-					ws.closeHandler(new Handler<Void>() {
-						@Override
-						public void handle(Void event) {
-							final Buffer buf = buffers.remove(id);
-							if (buf != null) {
-								try {
-									final String name = "Capture " + System.currentTimeMillis() + ".mp3";
-									storage.writeBuffer(id, toMp3(toWav(buf)), "audio/mp3",
-											name, new Handler<JsonObject>() {
-												@Override
-												public void handle(JsonObject f) {
-													if ("ok".equals(f.getString("status"))) {
-														workspaceHelper.addDocument(f,
-																UserUtils.sessionToUserInfos(infos), name, "mediaLibrary",
-																true, new JsonArray(), new Handler<Message<JsonObject>>() {
-															@Override
-															public void handle(Message<JsonObject> event) {
-																// TODO manage return
-															}
-														});
-													} else {
-														// TODO error
+				eb.send(AudioRecorderWorker.class.getSimpleName(),
+						new JsonObject().putString("action", "open").putString("id", id), new Handler<Message<JsonObject>>() {
+					@Override
+					public void handle(Message<JsonObject> m) {
+						if ("ok".equals(m.body().getString("status"))) {
+							ws.frameHandler(new Handler<WebSocketFrame>() {
+								@Override
+								public void handle(WebSocketFrame frame) {
+									if (frame.isBinary()) {
+										log.debug("frame handler");
+										eb.sendWithTimeout(AudioRecorderWorker.class.getSimpleName() + id,
+												((DefaultWebSocketFrame) frame).getBinaryData().array(), TIMEOUT,
+												new AsyncResultHandler<Message<JsonObject>>() {
+													@Override
+													public void handle(AsyncResult<Message<JsonObject>> ar) {
+														if (ar.failed() || !"ok".equals(ar.result().body().getString("status"))) {
+															ws.writeTextFrame("audio.chunk.error");
+														}
 													}
-												}
-											});
-								} catch (RuntimeException e) {
-									log.error("Error writing audio capture.", e);
+												});
+									} else {
+										final String command = frame.textData();
+										if (command != null && command.startsWith("save-")) {
+											save(id, command.substring(5), infos, ws);
+										} else if ("cancel".equals(command)) {
+											cancel(id, ws);
+										}
+									}
 								}
-//								vertx.fileSystem().writeFile("/tmp/" + id + ".mp3", toMp3(toWav(buf)),
-//										new AsyncResultHandler<Void>() {
-//											@Override
-//											public void handle(AsyncResult<Void> event) {
-//												if (event.failed()) {
-//													log.error("Error write wav file", event.cause());
-//												}
-//											}
-//										});
-								//save(buf.getBuffer(44, buf.length()).getBytes());
-								//save(buf.getBytes());
-							}
+							});
+							ws.closeHandler(new Handler<Void>() {
+								@Override
+								public void handle(Void event) {
+									cancel(id, null);
+								}
+							});
+							ws.resume();
+						} else {
+							ws.writeTextFrame(m.body().getString("message"));
 						}
-					});
-				}
-				ws.resume();
+					}
+				});
 			}
 		});
 	}
 
-	private static Buffer toWav(Buffer data) {
-		Buffer wav = new Buffer();
-		wav.appendString("RIFF");
-		wav.appendBytes(intToByteArray(44 + data.length()));
-		wav.appendString("WAVE");
-		wav.appendString("fmt ");
-		wav.appendBytes(intToByteArray(16));
-		wav.appendBytes(shortToByteArray((short) 1));
-		wav.appendBytes(shortToByteArray((short) 2));
-		wav.appendBytes(intToByteArray(44100));
-		wav.appendBytes(intToByteArray(44100 * 4));
-		wav.appendBytes(shortToByteArray((short) 4));
-		wav.appendBytes(shortToByteArray((short) 16));
-		wav.appendString("data");
-		wav.appendBytes(intToByteArray(data.length()));
-		wav.appendBuffer(data);
-		return wav;
-	}
-
-	private static byte[] shortToByteArray(short data) {
-		return ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(data).array();
-	}
-
-	private static byte[] intToByteArray(int i) {
-		return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(i).array();
-	}
-
-
-	private static Buffer toMp3(Buffer wav) {
-		final ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		final ByteArrayInputStream bais = new ByteArrayInputStream(wav.getBytes());
-		final LamejbConfig config = new LamejbConfig(44100, 128, LamejbConfig.MpegMode.STEREO, true);
-		if (Platform.isWindows()) {
-			LamejbCodecFactory codecFactory = new BladeCodecFactory();
-			LamejbCodec codec = codecFactory.createCodec();
-			codec.encodeStream(bais, baos, config);
-		} else {
-			StreamEncoder encoder = new StreamEncoderWAVImpl(new BufferedInputStream(bais));
-			LameConfig conf = encoder.getLameConfig();
-			conf.setInSamplerate(config.getSampleRate());
-			conf.setBrate(config.getBitRate());
-			conf.setBWriteVbrTag(config.isVbrTag());
-			conf.setMode(config.getMpegMode().lameMode());
-			encoder.encode(new BufferedOutputStream(baos));
+	private void save(String id, String name, JsonObject infos, final ServerWebSocket ws) {
+		JsonObject message = new JsonObject().putString("action", "save")
+				.putString("id", id).putObject("session", infos);
+		if (isNotEmpty(name)) {
+			message.putString("name", name);
 		}
-		return new Buffer(baos.toByteArray());
+		eb.send(AudioRecorderWorker.class.getSimpleName(), message,
+				new Handler<Message<JsonObject>>() {
+
+					@Override
+					public void handle(Message<JsonObject> event) {
+						if ("ok".equals(event.body().getString("status"))) {
+							ws.writeTextFrame("ok");
+						} else {
+							ws.writeTextFrame(event.body().getString("message"));
+						}
+						ws.close();
+					}
+				});
+	}
+
+	private void cancel(String id, final ServerWebSocket ws) {
+		eb.send(AudioRecorderWorker.class.getSimpleName(),
+				new JsonObject().putString("action", "cancel").putString("id", id),
+				new Handler<Message<JsonObject>>() {
+
+					@Override
+					public void handle(Message<JsonObject> event) {
+						if (ws != null) {
+							if ("ok".equals(event.body().getString("status"))) {
+								ws.writeTextFrame("ok");
+							} else {
+								ws.writeTextFrame(event.body().getString("message"));
+							}
+							ws.close();
+						}
+					}
+				});
 	}
 
 }

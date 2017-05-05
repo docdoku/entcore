@@ -1689,7 +1689,7 @@ var recorder = (function(){
 	var leftChannel = [],
 		rightChannel = [];
 
-	var bufferSize = 4096,
+	var bufferSize = 16384,
 		loaded = false,
 		recordingLength = 0,
 		lastIndex = 0,
@@ -1703,32 +1703,32 @@ var recorder = (function(){
         });
 	}
 
-function sendWavChunk() {
-					var	index = rightChannel.length;
-					if (!(index > lastIndex)) return;
-					encoder.postMessage(['chunk', leftChannel.slice(lastIndex, index), rightChannel.slice(lastIndex, index), (index - lastIndex) * bufferSize]);
-                    			encoder.onmessage = function(e) {
-                    			var deflate = new Zlib.Deflate(e.data);
-                    				ws.send(deflate.compress());
-                    			};
-                    			lastIndex = index;
-					//var blob = encodeWav(leftChannel.slice(lastIndex, index), rightChannel.slice(lastIndex, index), (index - lastIndex) * bufferSize);
-
-//					var reader = new window.FileReader();
-//					reader.readAsDataURL(blob);
-//					reader.onloadend = function() {
-//						base64data = reader.result;
-//						ws.send(base64data);
-//					}
-				}
-
-	function closeWs() {
-		clearInterval(intervalId);
-		sendWavChunk();
-        ws.close();
-        ws = null;
+	function sendWavChunk() {
+		var	index = rightChannel.length;
+		if (!(index > lastIndex)) return;
+		encoder.postMessage(['chunk', leftChannel.slice(lastIndex, index), rightChannel.slice(lastIndex, index), (index - lastIndex) * bufferSize]);
+		encoder.onmessage = function(e) {
+			var deflate = new Zlib.Deflate(e.data);
+			ws.send(deflate.compress());
+		};
+		lastIndex = index;
 	}
 
+	function closeWs() {
+		if (ws) {
+			if (ws.readyState === 1) {
+				ws.close()
+			}
+		}
+        clearWs();
+	}
+
+	function clearWs() {
+		ws = null;
+        leftChannel = [];
+		rightChannel = [];
+		lastIndex = 0;
+	}
 
 	function notifyFollowers(status, data){
 		followers.forEach(function(follower){
@@ -1766,35 +1766,15 @@ function sendWavChunk() {
 					}
 					var left = new Float32Array(e.inputBuffer.getChannelData (0));
 					leftChannel.push (left);
-//					leftBufferChannel.push (left);
 					var right = new Float32Array(e.inputBuffer.getChannelData (1));
 					rightChannel.push (right);
-//					leftBufferChannel.push (left);
-//					bufferLength += bufferSize;
-//					var	bla = interleave(left, right);
-//					ws.send(bla);
-
 
 					recordingLength += bufferSize;
 
-//					var tmpLeftChannel = [];
-//					tmpLeftChannel.push (new Float32Array(left));
-//					var tmpRightChannel = [];
-//					tmpRightChannel.push (new Float32Array(right));
-//					var leftBuffer = mergeBuffers(tmpLeftChannel, recordingLength);
-//					var rightBuffer = mergeBuffers(tmpRightChannel, recordingLength);
-//					var interleaved = interleave (leftBuffer, rightBuffer);
-//					var blob = encodeWav(tmpLeftChannel, tmpRightChannel, bufferSize);
-//					var reader = new window.FileReader();
-//                     reader.readAsDataURL(blob);
-//                     reader.onloadend = function() {
-//						base64data = reader.result;
-//						ws.send(base64data);
-//                      }
-//					ws.send(interleaved);
-
-
 					this.elapsedTime += e.inputBuffer.duration;
+
+					sendWavChunk();
+
 					notifyFollowers(this.status);
 				}.bind(this);
 
@@ -1809,7 +1789,9 @@ function sendWavChunk() {
 			return navigator.getUserMedia !== undefined && window.AudioContext !==undefined;
 		},
 		stop: function(){
-			closeWs();
+			if (ws) {
+				ws.send("cancel");
+			}
 			this.status = 'idle';
 			player.pause();
 			if(player.currentTime > 0){
@@ -1830,13 +1812,13 @@ function sendWavChunk() {
 			var that = this;
 			if (ws) {
 				that.status = 'recording';
-				notifyFollowers(this.status);
+				notifyFollowers(that.status);
 				if(!loaded){
 					that.loadComponents();
 				}
-				intervalId = setInterval(sendWavChunk, 200);
 			} else {
-				ws = new WebSocket("wss://one/audio/" + uuid());
+				ws = new WebSocket((window.location.protocol === "https:" ? "wss": "ws") + "://" +
+						window.location.hostname + "/audio/" + uuid());
 				ws.onopen = function () {
 					if(player.currentTime > 0){
 						player.currentTime = 0;
@@ -1847,12 +1829,33 @@ function sendWavChunk() {
 					if(!loaded){
 						that.loadComponents();
 					}
-					intervalId = setInterval(sendWavChunk, 200);
 				};
+				ws.onerror = function (event) {
+					console.log(event);
+					that.status = 'stop';
+                    notifyFollowers(that.status);
+                    closeWs();
+                    notify.info(event.data);
+				}
+                ws.onmessage = function (event) {
+                	if (event.data && event.data.indexOf("error") !== -1) {
+                		console.log(event.data);
+						closeWs();
+						notify.info(event.data);
+                	} else if (event.data && event.data === "ok") {
+                		closeWs();
+                		notify.info("recorder.saved")
+                	}
+
+                }
+                ws.onclose = function (event) {
+                	that.status = 'stop';
+                    notifyFollowers(that.status);
+                    clearWs();
+                }
 			}
 		},
 		pause: function(){
-			clearInterval(intervalId);
 			this.status = 'paused';
 			player.pause();
 			notifyFollowers(this.status);
@@ -1874,33 +1877,11 @@ function sendWavChunk() {
 		title: "",
 		status: 'idle',
 		save: function(callback, format){
-			ws.close();
-			this.stop();
+//			this.stop();
+			sendWavChunk();
+			ws.send("save-" +  this.title);
 			this.status = 'encoding';
 			notifyFollowers(this.status);
-			if(!format){
-				format = 'mp3';
-			}
-
-			var form = new FormData();
-			var encoder = new Worker('/infra/public/js/audioEncoder.js');
-			encoder.postMessage([format, rightChannel, leftChannel, recordingLength]);
-			encoder.onmessage = function(e){
-				this.status = 'uploading';
-				notifyFollowers(this.status);
-				form.append('blob', e.data, this.title + '.' + format);
-				var url = '/workspace/document';
-				if(this.protected){
-					url += '?application=mediaLibrary&protected=true';
-				}
-				http().postFile(url, form).done(function(doc){
-					if(typeof callback === 'function'){
-						callback(doc);
-						this.flush();
-						notify.info('recorder.saved');
-					}
-				}.bind(this));
-			}.bind(this);
 		},
 		mute: function(mute){
 			if(mute){
