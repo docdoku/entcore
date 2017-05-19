@@ -605,7 +605,7 @@ Model.prototype.sync = function(){
 
 export function bootstrap(func) {
     if (currentLanguage === 'fr') {
-        moment.lang(currentLanguage, {
+        moment.updateLocale(currentLanguage, {
             calendar: {
                 lastDay: '[Hier à] HH[h]mm',
                 sameDay: '[Aujourd\'hui à] HH[h]mm',
@@ -617,7 +617,7 @@ export function bootstrap(func) {
         });
     }
     else {
-        moment.lang(currentLanguage);
+        moment.locale(currentLanguage);
     }
 
 	if((window as any).notLoggedIn){
@@ -631,8 +631,8 @@ export function bootstrap(func) {
 		});
 		return;
 	}
-	http().get('/auth/oauth2/userinfo').done(function(data){
-		skin.loadConnected();
+	http().get('/auth/oauth2/userinfo').done(async (data): Promise<void> => {
+		await skin.loadConnected();
 		model.me = data;
 		model.me.preferences = {
 			save: function(pref, data){
@@ -655,6 +655,7 @@ export function bootstrap(func) {
 			if(right === 'owner'){
 				return resource.owner && resource.owner.userId === model.me.userId;
 			}
+			let rightName = right.right || right;
 
 			var currentSharedRights = _.filter(resource.shared, function(sharedRight){
 				return model.me.groupsIds.indexOf(sharedRight.groupId) !== -1
@@ -662,34 +663,34 @@ export function bootstrap(func) {
 			});
 
 			var resourceRight = _.find(currentSharedRights, function(resourceRight){
-				return resourceRight[right.right] || resourceRight.manager;
+				return resourceRight[rightName] || resourceRight.manager;
 			}) !== undefined;
 
-			var workflowRight = this.hasWorkflow(right.workflow);
+			var workflowRight = true;
+			if(right.workflow){
+				workflowRight = this.hasWorkflow(right.workflow);
+			}
 
 			return resourceRight && workflowRight;
 		};
 
 		model.me.workflow = {
-			load: function(services){
-				services.forEach(function(serviceName){
-					this[serviceName] = Behaviours.findWorkflow(serviceName);
-				}.bind(this));
+			load: async function(services): Promise<void>{
+				for(let service of services){
+					let workflows = await Behaviours.findWorkflow(service);
+					console.log('Workflows loaded from ' + service);
+					console.log(workflows);
+					this[service] = workflows;
+				}
 			}
 		};
 
-		model.me.workflow.load(['workspace', appPrefix]);
+		await model.me.workflow.load(['workspace', appPrefix]);
 		model.trigger('me.change');
 
 		calendar.init();
-
-		http().get('/userbook/preference/apps').done(function(data){
-			if(!data.preference){
-				data.preference = null;
-			}
-			model.me.bookmarkedApps = JSON.parse(data.preference) || [];
-			func();
-		});
+		await skin.loadBookmarks();
+		func();
 	})
 	.e404(function(){
 		func();

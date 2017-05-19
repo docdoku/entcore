@@ -18,18 +18,18 @@
 import { $ } from './libs/jquery/jquery';
 import { idiom as lang, idiom as idiom } from './idiom';
 import { http, Http } from './http';
-import { calendar } from './calendar';
 import { Collection, Model, model } from './modelDefinitions';
 import { bootstrap } from './lib';
 import { ui } from './ui';
 import { Behaviours } from './behaviours';
-import { recorder } from './recorder';
 import { currentLanguage, routes, appPrefix, infraPrefix } from './globals';
 import { template } from './template';
 import { moment } from './libs/moment/moment';
 import { _ } from './libs/underscore/underscore';
 import { angular } from './libs/angular/angular';
 import { workspace, notify, skin, RTE } from './entcore';
+import { ng } from './ng-start';
+import * as directives from './directives';
 
 var module = angular.module('app', ['ngSanitize', 'ngRoute'], function($interpolateProvider) {
 		$interpolateProvider.startSymbol('[[');
@@ -148,6 +148,10 @@ if(routes.routing){
 	module.config(routes.routing);
 }
 
+for (let directive in directives) {
+    ng.directives.push(directives[directive]);
+}
+
 //directives
 module.directive('completeChange', function() {
 	return {
@@ -180,180 +184,6 @@ module.directive('completeChange', function() {
 			});
 		}
 	};
-});
-
-module.directive('lightbox', function($compile){
-	return {
-		restrict: 'E',
-		transclude: true,
-		scope: {
-			show: '=',
-			onClose: '&'
-		},
-		template: '<section class="lightbox">' +
-						'<div class="background"></div>' +
-						'<div class="content">' +
-							'<div class="twelve cell" ng-transclude></div>'+
-							'<div class="close-lightbox">'+
-							'<i class="close-2x"></i>'+
-							'</div>'+
-						'</div>'+
-					'</section>'+
-				'</div>',
-		link: function(scope, element, attributes){
-			var content = element.find('.content');
-			element.children('.lightbox').find('> .background, > .content > .close-lightbox > i.close-2x').on('click', function(e){
-				element.children('.lightbox').first().fadeOut();
-                $('body').css({ overflow: 'auto' });
-                $('body').removeClass('lightbox-opened');
-
-				scope.$eval(scope.onClose);
-				if(!scope.$$phase){
-					scope.$parent.$apply();
-				}
-			});
-			element.children('.lightbox').on('mousedown', function(e){
-				e.stopPropagation();
-			});
-
-			scope.$watch('show', function(newVal){
-                if (newVal) {
-                    $('body').addClass('lightbox-opened');
-                    var lightboxWindow = element.children('.lightbox');
-
-                    //Backup overflow hidden elements + z-index of parents
-                    var parentElements = element.parents();
-
-                    scope.backup = {
-                        overflow: _.filter(parentElements, function(parent) {
-                            return $(parent).css('overflow-x') !== 'visible' || $(parent).css('overflow-y') !== 'visible'
-                        }),
-                        zIndex: _.map(parentElements, function (parent) {
-                                var index = '';
-                                if($(parent).attr('style') && $(parent).attr('style').indexOf('z-index') !== -1){
-                                    index = $(parent).css('z-index')
-                                }
-                                return {
-                                    element: $(parent),
-                                    index: index
-                                }
-                            })
-                    };
-
-                    //Removing overflow properties
-				    _.forEach(scope.backup.overflow, function(element) {
-				        $(element).css({ 'overflow': 'visible' })
-				    });
-
-                    //Ensuring proper z-index
-                    _.forEach(scope.backup.zIndex, function(elementObj) {
-                        elementObj.element.css('z-index', 99999)
-                    })
-
-					setTimeout(function(){
-						lightboxWindow.fadeIn();
-					}, 100);
-
-					$('body').css({ overflow: 'hidden' });
-				}
-                else {
-                    $('body').removeClass('lightbox-opened');
-
-                    if(scope.backup){
-                        //Restoring stored elements properties
-                        _.forEach(scope.backup.overflow, function(element) {
-                            $(element).css('overflow', '')
-                        })
-                        _.forEach(scope.backup.zIndex, function(elementObj) {
-                            elementObj.element.css('z-index', elementObj.index)
-                        })
-                    }
-
-					element.children('.lightbox').fadeOut();
-					$('body').css({ overflow: 'auto' });
-				}
-			});
-
-            scope.$on("$destroy", function () {
-                $('body').removeClass('lightbox-opened');
-			    $('body').css({ overflow: 'auto' });
-
-			    if (scope.backup) {
-			        //Restoring stored elements properties
-			        _.forEach(scope.backup.overflow, function (element) {
-			            $(element).css('overflow', '')
-			        })
-			        _.forEach(scope.backup.zIndex, function (elementObj) {
-			            elementObj.element.css('z-index', elementObj.index)
-			        })
-			    }
-			});
-		}
-	}
-});
-
-module.directive('slider', function($compile, $parse){
-	return {
-		restrict: 'E',
-		scope: true,
-		template: '<div class="bar"></div><div class="filled"></div><div class="cursor"></div><legend class="min"></legend><legend class="max"></legend>',
-		link: function(scope, element, attributes){
-			element.addClass('drawing-zone');
-			var cursor = element.children('.cursor');
-			var max = parseInt(attributes.max);
-			var min = parseInt(attributes.min);
-
-			var ngModel = $parse(attributes.ngModel);
-
-			var applyValue = function(newVal){
-				var pos = parseInt((newVal - min) * element.children('.bar').width() / (max - min));
-				cursor.css({
-					left: pos + 'px',
-					position: 'absolute'
-				});
-				element.children('.filled').width(cursor.position().left);
-			};
-
-			$(window).on('resize', function () {
-			    applyValue(ngModel(scope));
-			});
-
-			scope.$watch(function(){
-				return ngModel(scope);
-			}, applyValue);
-
-			if(typeof ngModel(scope) !== 'number'){
-				ngModel.assign(scope, parseInt(attributes.default));
-				applyValue(ngModel(scope));
-			}
-
-			element.children('legend.min').html(idiom.translate(attributes.minLegend));
-			element.children('legend.max').html(idiom.translate(attributes.maxLegend));
-
-			element.children('.bar, .filled').on('click', function(e){
-				var newPos = e.clientX - element.children('.bar').offset().left;
-				var newVal = (newPos * (max - min) / element.children('.bar').width()) + min;
-				ngModel.assign(scope, newVal);
-				scope.$apply();
-			});
-
-			ui.extendElement.draggable(cursor, {
-				lock: {
-					vertical: true
-				},
-				mouseUp: function(){
-					var cursorPosition = cursor.position().left;
-					var newVal = (cursorPosition * (max - min) / element.children('.bar').width()) + min;
-					ngModel.assign(scope, newVal);
-					scope.$apply();
-				},
-				tick: function(){
-					var cursorPosition = cursor.position().left;
-					element.children('.filled').width(cursorPosition);
-				}
-			});
-		}
-	}
 });
 
 module.directive('mediaLibrary', function($compile){
@@ -396,491 +226,6 @@ module.directive('mediaLibrary', function($compile){
 					loading: []
 				};
 			});
-		}
-	}
-});
-
-module.directive('linker', function($compile){
-	return {
-		restrict: 'E',
-		templateUrl: '/' + appPrefix + '/public/template/entcore/linker.html',
-		scope: true,
-		controller: function($scope){
-			$scope.linker = {
-				me: model.me,
-				search: { text: '', application: {} },
-				params: {},
-				resource: {}
-			};
-		},
-		link: function(scope, element, attributes){
-			scope.linker.editor = scope.$eval(attributes.editor);
-			scope.linker.onChange = function(){
-				scope.$eval(attributes.onChange);
-			};
-
-			var linkNode = $('<a />');
-			var appendText = '';
-			scope.$watch(function(){ return scope.display.chooseLink }, function(newVal){
-				if(newVal){
-					if(!scope.linker.editor){
-						scope.linker.editor = scope.$eval(attributes.editor);
-					}
-
-					if(!scope.display.chooseLink[scope.linker.editor.name]){
-						return;
-					}
-
-					var contextEditor = scope.linker.editor;
-					var bookmarks = contextEditor.getSelection().createBookmarks(),
-						range = contextEditor.getSelection().getRanges()[0],
-						fragment = range.clone().cloneContents();
-					contextEditor.getSelection().selectBookmarks(bookmarks);
-
-					var node = $(range.startContainer.getParent().$);
-					if(node[0].nodeName !== 'A'){
-						node = $(range.startContainer.$);
-						if(node[0].nodeName !== 'A'){
-							scope.newNode = true;
-							return;
-						}
-					}
-
-                    scope.newNode = false;
-
-					scope.linker.params.link = node.attr('href');
-					scope.linker.externalLink = !node.attr('data-id');
-					scope.linker.params.appPrefix = node.attr('data-app-prefix');
-					scope.linker.params.id = node.attr('data-id');
-					scope.linker.params.blank = node.attr('target') === '_blank';
-					scope.linker.params.target = node.attr('target');
-					scope.linker.params.tooltip = node.attr('tooltip');
-
-					scope.linker.search.application = _.find(scope.linker.apps, function(app){
-						return app.address.indexOf(node.attr('data-app-prefix')) !== -1;
-					});
-
-					scope.linker.search.text = scope.params.id;
-					scope.linker.loadApplicationResources(function(){
-						scope.linker.searchApplication();
-						scope.linker.search.text = ' ';
-						scope.linker.$apply();
-					});
-				}
-				else{
-					scope.linker.params = {};
-					scope.linker.search.text = '';
-				}
-			}, true);
-
-			http().get('/resources-applications').done(function(apps){
-				scope.linker.apps = [];
-				var n = model.me.apps.length;
-				model.me.apps.forEach(function(app){
-					var prefix = _.find(apps, function(a){ return app.address.indexOf(a) !== -1 && app.icon &&  app.icon.indexOf('/') === -1 });
-					if(prefix){
-						app.prefix = prefix;
-						app.displayName = lang.translate(app.displayName);
-						Behaviours.loadBehaviours(app.prefix, function(behaviours){
-							n--;
-							if(behaviours.loadResources){
-								scope.linker.apps.push(app);
-							}
-							if(n === 0){
-								var currentApp = _.find(scope.linker.apps, function(app){
-									return app.address.indexOf(appPrefix) !== -1 && app.icon.indexOf('/') === -1;
-								});
-
-								scope.linker.search.application = scope.linker.apps[0];
-								if(currentApp){
-									scope.linker.search.application = currentApp;
-								}
-
-								scope.linker.loadApplicationResources(function(){});
-							}
-						});
-					}
-					else{
-						n--;
-					}
-				});
-			});
-
-			scope.linker.loadApplicationResources = function(cb){
-				var split = scope.linker.search.application.address.split('/');
-				var prefix = split[split.length - 1];
-				scope.linker.params.appPrefix = prefix;
-				if(!cb){
-					cb = function(){
-						scope.linker.searchApplication();
-						scope.$apply('linker');
-					};
-				}
-				Behaviours.applicationsBehaviours[prefix].loadResources(cb);
-				scope.linker.addResource = Behaviours.applicationsBehaviours[prefix].create;
-			};
-
-			scope.linker.searchApplication = function(){
-				var split = scope.linker.search.application.address.split('/');
-				var prefix = split[split.length - 1];
-				scope.linker.params.appPrefix = prefix;
-				Behaviours.loadBehaviours(scope.linker.params.appPrefix, function(appBehaviour){
-					scope.linker.resources = _.filter(appBehaviour.resources, function(resource) {
-						return scope.linker.search.text !== '' && (lang.removeAccents(resource.title.toLowerCase()).indexOf(lang.removeAccents(scope.linker.search.text).toLowerCase()) !== -1 ||
-							resource._id === scope.linker.search.text);
-					});
-				});
-			};
-
-			scope.linker.createResource = function(){
-				Behaviours.loadBehaviours(scope.linker.params.appPrefix, function(appBehaviour){
-					appBehaviour.create(scope.linker.resource, function(){
-						scope.linker.search.text = scope.linker.resource.title;
-						scope.linker.searchApplication();
-						scope.$apply();
-					});
-				});
-			};
-
-			scope.linker.applyLink = function(link){
-				scope.linker.params.link = link;
-			};
-
-			scope.linker.applyResource = function(resource){
-				scope.linker.params.link = resource.path;
-				scope.linker.params.id = resource._id;
-			};
-
-			scope.linker.saveLink = function(){
-				if(scope.linker.params.blank){
-					scope.linker.params.target = '_blank';
-				}
-
-				var contextEditor = scope.linker.editor;
-				var bookmarks = contextEditor.getSelection().createBookmarks(),
-					range = contextEditor.getSelection().getRanges()[0],
-					fragment = range.clone().cloneContents();
-				contextEditor.getSelection().selectBookmarks(bookmarks);
-
-				var linkNode = scope.linker.editor.document.createElement('a');
-
-				if(scope.linker.params.link){
-					linkNode.setAttribute('href', scope.linker.params.link);
-
-					if(scope.linker.params.appPrefix){
-						linkNode.setAttribute('data-app-prefix', scope.linker.params.appPrefix);
-						if(scope.linker.params.appPrefix === appPrefix && !scope.linker.externalLink){
-							linkNode.data('reload', true);
-						}
-					}
-					if(scope.linker.params.id){
-						linkNode.setAttribute('data-id', scope.linker.params.id);
-					}
-					if(scope.linker.params.blank){
-						scope.linker.params.target = '_blank';
-						linkNode.setAttribute('target', scope.linker.params.target);
-					}
-					if(scope.linker.params.tooltip){
-						linkNode.setAttribute('tooltip', scope.linker.params.tooltip);
-					}
-				}
-
-                var appendText = "",
-                    childList = fragment.getChildren(),
-                    childCount = childList.count();
-
-                if(!scope.newNode && childCount === 0){
-                    appendText = range.startContainer.getText();
-                } else {
-    				for(var i = 0; i < childCount; i++){
-    					var child = childList.getItem(i);
-    					if(child.$.nodeName === 'A' || !child.getOuterHtml){
-    						appendText += child.getText();
-    					}
-    					else{
-    						appendText += child.getOuterHtml();
-    					}
-    				}
-                    if(childCount === 0){
-                        appendText = scope.linker.params.link;
-                    }
-                }
-
-				linkNode.appendHtml(appendText);
-                if(!scope.newNode && childCount === 0){
-                    linkNode.insertAfter(range.startContainer);
-                    range.startContainer.remove(false);
-                } else {
-                    scope.linker.editor.insertElement(linkNode);
-                }
-
-				scope.display.chooseLink[scope.linker.editor.name] = false;
-				scope.linker.onChange();
-				scope.$apply();
-			};
-
-			scope.linker.cancel = function(){
-				scope.display.chooseLink[scope.linker.editor.name] = false;
-			};
-		}
-	}
-});
-
-module.directive('calendar', function($compile){
-	return {
-		restrict: 'E',
-		scope: true,
-		templateUrl: '/' + appPrefix + '/public/template/entcore/calendar.html',
-		controller: function($scope, $timeout){
-			var refreshCalendar = function(){
-				model.calendar.clearScheduleItems();
-				$scope.items = _.where(_.map($scope.items, function(item){
-					item.beginning = item.startMoment;
-					item.end = item.endMoment;
-					return item;
-				}), { is_periodic: false });
-				model.calendar.addScheduleItems($scope.items);
-				$scope.calendar = model.calendar;
-				$scope.moment = moment;
-				$scope.display.editItem = false;
-				$scope.display.createItem = false;
-
-				$scope.editItem = function(item){
-					$scope.calendarEditItem = item;
-					$scope.display.editItem = true;
-				};
-
-				$scope.createItem = function(day, timeslot){
-					$scope.newItem = {};
-					var year = model.calendar.year;
-					if(day.index < model.calendar.firstDay.dayOfYear()){
-						year++;
-					}
-					$scope.newItem.beginning = moment().utc().year(year).dayOfYear(day.index).hour(timeslot.start);
-					$scope.newItem.end = moment().utc().year(year).dayOfYear(day.index).hour(timeslot.end);
-					model.calendar.newItem = $scope.newItem;
-					$scope.onCreateOpen();
-				};
-
-				$scope.closeCreateWindow = function(){
-					$scope.display.createItem = false;
-					$scope.onCreateClose();
-				};
-
-				$scope.updateCalendarWeek = function(){
-					//annoying new year workaround
-					if(moment(model.calendar.dayForWeek).week() === 1 && moment(model.calendar.dayForWeek).dayOfYear() > 7){
-						model.calendar = new calendar.Calendar({ week: moment(model.calendar.dayForWeek).week(), year: moment(model.calendar.dayForWeek).year() + 1 });
-					}
-					else if(moment(model.calendar.dayForWeek).week() === 53 && moment(model.calendar.dayForWeek).dayOfYear() < 7){
-						model.calendar = new calendar.Calendar({ week: moment(model.calendar.dayForWeek).week(), year: moment(model.calendar.dayForWeek).year() - 1 });
-					} else{
-						model.calendar = new calendar.Calendar({ week: moment(model.calendar.dayForWeek).week(), year: moment(model.calendar.dayForWeek).year() });
-					}
-					model.trigger('calendar.date-change');
-					refreshCalendar();
-				};
-
-				$scope.previousTimeslots = function(){
-					calendar.startOfDay --;
-					calendar.endOfDay --;
-					model.calendar = new calendar.Calendar({ week: moment(model.calendar.dayForWeek).week(), year: moment(model.calendar.dayForWeek).year() });
-					refreshCalendar();
-				};
-
-				$scope.nextTimeslots = function(){
-					calendar.startOfDay ++;
-					calendar.endOfDay ++;
-					model.calendar = new calendar.Calendar({ week: moment(model.calendar.dayForWeek).week(), year: moment(model.calendar.dayForWeek).year() });
-					refreshCalendar();
-				};
-			};
-
-			calendar.setCalendar = function (cal) {
-			    model.calendar = cal;
-			    refreshCalendar();
-			};
-
-			$timeout(function(){
-				refreshCalendar();
-				$scope.$watchCollection('items', refreshCalendar);
-			}, 0);
-			$scope.refreshCalendar = refreshCalendar;
-		},
-		link: function(scope, element, attributes){
-			var allowCreate;
-			scope.display = {};
-			attributes.$observe('createTemplate', function(){
-				if(attributes.createTemplate){
-					template.open('schedule-create-template', attributes.createTemplate);
-					allowCreate = true;
-				}
-				if(attributes.displayTemplate){
-					template.open('schedule-display-template', attributes.displayTemplate);
-				}
-			});
-
-			scope.items = scope.$eval(attributes.items);
-			scope.onCreateOpen = function(){
-				if(!allowCreate){
-					return;
-				}
-				scope.$eval(attributes.onCreateOpen);
-				scope.display.createItem = true;
-			};
-			scope.onCreateClose = function(){
-				scope.$eval(attributes.onCreateClose);
-			};
-			scope.$watch(function(){
-				return scope.$eval(attributes.items)
-			}, function(newVal){
-				scope.items = newVal;
-			});
-		}
-	}
-});
-
-module.directive('scheduleItem', function($compile){
-	return {
-		restrict: 'E',
-		require: '^calendar',
-		template: '<div class="schedule-item" resizable horizontal-resize-lock draggable>' +
-			'<container template="schedule-display-template" class="absolute"></container>' +
-			'</div>',
-		controller: function($scope){
-
-		},
-		link: function(scope, element, attributes){
-			var parentSchedule = element.parents('.schedule');
-			var scheduleItemEl = element.children('.schedule-item');
-			var dayWidth = parentSchedule.find('.day').width();
-			if(scope.item.beginning.dayOfYear() !== scope.item.end.dayOfYear() || scope.item.locked){
-				scheduleItemEl.removeAttr('resizable');
-				scheduleItemEl.removeAttr('draggable');
-				scheduleItemEl.unbind('mouseover');
-				scheduleItemEl.unbind('click');
-				scheduleItemEl.data('lock', true)
-			}
-
-			var getTimeFromBoundaries = function(){
-				// compute element positon added to heiht of 7 hours ao avoid negative value side effect
-				var topPos = scheduleItemEl.position().top + (calendar.dayHeight * calendar.startOfDay);
-				var startTime = moment().utc();
-				startTime.hour(Math.floor(topPos / calendar.dayHeight));
-				startTime.minute((topPos % calendar.dayHeight) * 60 / calendar.dayHeight);
-
-				var endTime = moment().utc();
-				endTime.hour(Math.floor((topPos + scheduleItemEl.height()) / calendar.dayHeight));
-				endTime.minute(((topPos + scheduleItemEl.height()) % calendar.dayHeight) * 60 / calendar.dayHeight);
-
-				startTime.year(model.calendar.year);
-				endTime.year(model.calendar.year);
-
-				var days = element.parents('.schedule').find('.day');
-				var center = scheduleItemEl.offset().left + scheduleItemEl.width() / 2;
-				var dayWidth = days.first().width();
-				days.each(function(index, item){
-					var itemLeft = $(item).offset().left;
-					if(itemLeft < center && itemLeft + dayWidth > center){
-						var day = index + 1;
-						var week = model.calendar.week;
-						endTime.week(week);
-						startTime.week(week);
-						if(day === 7){
-							day = 0;
-							endTime.week(week + 1);
-							startTime.week(week + 1);
-						}
-						endTime.day(day);
-						startTime.day(day);
-					}
-				});
-
-				return {
-					startTime: startTime,
-					endTime: endTime
-				}
-			};
-
-			scheduleItemEl.on('stopResize', function(){
-				var newTime = getTimeFromBoundaries();
-				scope.item.beginning = newTime.startTime;
-				scope.item.end = newTime.endTime;
-				if(typeof scope.item.calendarUpdate === 'function'){
-					scope.item.calendarUpdate();
-					model.calendar.clearScheduleItems();
-					model.calendar.addScheduleItems(scope.$parent.items);
-					scope.$parent.$apply('items');
-				}
-			});
-
-			scheduleItemEl.on('stopDrag', function(){
-				var newTime = getTimeFromBoundaries();
-				scope.item.beginning = newTime.startTime;
-				scope.item.end = newTime.endTime;
-				if(typeof scope.item.calendarUpdate === 'function'){
-					scope.item.calendarUpdate();
-					model.calendar.clearScheduleItems();
-					model.calendar.addScheduleItems(scope.$parent.items);
-					scope.$parent.$apply('items');
-					parentSchedule.find('schedule-item').each(function(index, item){
-						var scope = angular.element(item).scope();
-						scope.placeItem()
-					});
-				}
-			});
-
-			var placeItem = function(){
-				var cellWidth = element.parent().width() / 12;
-				var startDay = scope.item.beginning.dayOfYear();
-				var endDay = scope.item.end.dayOfYear();
-				var hours = calendar.getHours(scope.item, scope.day);
-
-				var itemWidth = scope.day.scheduleItems.scheduleItemWidth(scope.item);
-				scheduleItemEl.css({ width: itemWidth + '%' });
-				var calendarGutter = 0;
-				var collision = true;
-				while(collision){
-					collision = false;
-					scope.day.scheduleItems.forEach(function(scheduleItem){
-						if(scheduleItem === scope.item){
-							return;
-						}
-						if(scheduleItem.beginning < scope.item.end && scheduleItem.end > scope.item.beginning){
-							if(scheduleItem.calendarGutter === calendarGutter){
-								calendarGutter ++;
-								collision = true;
-							}
-						}
-					});
-				}
-				scope.item.calendarGutter = calendarGutter;
-				var beginningMinutesHeight = scope.item.beginning.minutes() * calendar.dayHeight / 60;
-				var endMinutesHeight = scope.item.end.minutes() * calendar.dayHeight / 60;
-				var top = (hours.startTime - calendar.startOfDay) * calendar.dayHeight + beginningMinutesHeight;
-				scheduleItemEl.height(((hours.endTime - hours.startTime) * calendar.dayHeight - beginningMinutesHeight + endMinutesHeight) + 'px');
-				scheduleItemEl.css({
-					top: top + 'px',
-					left: (scope.item.calendarGutter * (itemWidth * dayWidth / 100)) + 'px'
-				});
-				var container = element.find('container')
-				if(top < 0){
-					container.css({
-						top: (Math.abs(top) - 5) + 'px'
-					});
-					container.height(element.children('.schedule-item').height() + top + 5)
-				}
-				else{
-					container.css({
-						top: 0 + 'px'
-					});
-					container.css({ height: '100%' })
-				}
-			};
-			scope.$parent.$watch('items', placeItem);
-			scope.$parent.$watchCollection('items', placeItem);
-			scope.$watch('item', placeItem);
-			scope.placeItem = placeItem;
 		}
 	}
 });
@@ -940,93 +285,6 @@ module.directive('colorSelect', function($compile){
 	}
 });
 
-module.directive('imageSelect', function($compile){
-	return {
-		restrict: 'E',
-		transclude: true,
-		scope: {
-			ngModel: '=',
-			thumbnails: '&',
-			ngChange: '&',
-			default: '@'
-		},
-		template: '<div><img ng-src="[[ngModel]]?[[getThumbnails()]]" class="pick-file" draggable="false" ng-if="ngModel" style="cursor: pointer" />' +
-			'<img skin-src="[[default]]" class="pick-file" draggable="false" ng-if="!ngModel" style="cursor: pointer" />' +
-			'<lightbox show="userSelecting" on-close="userSelecting = false;">' +
-			'<media-library ' +
-				'visibility="selectedFile.visibility"' +
-				'ng-change="updateDocument()" ' +
-				'ng-model="selectedFile.file" ' +
-				'file-format="\'img\'">' +
-			'</media-library>' +
-			'</lightbox>' +
-			'</div>',
-		link: function(scope, element, attributes){
-			scope.selectedFile = { file: {}, visibility: 'protected' };
-
-			scope.selectedFile.visibility = scope.$parent.$eval(attributes.visibility);
-			if(!scope.selectedFile.visibility){
-				scope.selectedFile.visibility = 'protected';
-			}
-			scope.selectedFile.visibility = scope.selectedFile.visibility.toLowerCase();
-
-			element.on('dragenter', function(e){
-				e.preventDefault();
-			});
-
-			element.on('dragover', function(e){
-				element.addClass('droptarget');
-				e.preventDefault();
-			});
-
-			element.on('dragleave', function(){
-				element.removeClass('droptarget');
-			});
-
-			element.on('drop', function(e){
-				element.removeClass('droptarget');
-				element.addClass('loading-panel');
-				e.preventDefault();
-				var file = e.originalEvent.dataTransfer.files[0];
-				workspace.Document.prototype.upload(file, 'file-upload-' + file.name + '-0', function(doc){
-					scope.selectedFile.file = doc;
-					scope.updateDocument();
-					element.removeClass('loading-panel');
-				}, scope.selectedFile.visibility);
-			});
-
-			scope.$watch('thumbnails', function(thumbs){
-				var evaledThumbs = scope.$eval(thumbs);
-				if(!evaledThumbs){
-					return;
-				}
-				scope.getThumbnails = function(){
-					var link = '';
-					evaledThumbs.forEach(function(th){
-						link += 'thumbnail=' + th.width + 'x' + th.height + '&';
-					});
-					return link;
-				}
-			});
-
-			scope.updateDocument = function(){
-				scope.userSelecting = false;
-				var path = '/workspace/document/';
-				if(scope.selectedFile.visibility === 'public'){
-					path = '/workspace/pub/document/'
-				}
-				scope.ngModel = path + scope.selectedFile.file._id;
-				scope.$apply();
-				scope.ngChange();
-			};
-			element.on('click', '.pick-file', function(){
-				scope.userSelecting = true;
-				scope.$apply('userSelecting');
-			});
-		}
-	}
-});
-
 module.directive('soundSelect', function($compile){
 	return {
 		restrict: 'E',
@@ -1036,8 +294,9 @@ module.directive('soundSelect', function($compile){
 			ngChange: '&',
 			visibility: '@'
 		},
-		template: '<div><audio ng-src="[[ngModel]]" controls ng-if="ngModel" style="cursor: pointer"></audio>' +
-			'<lightbox show="userSelecting" on-close="userSelecting = false;">' +
+        template: '<div><audio ng-src="[[ngModel]]" controls ng-if="ngModel" style="cursor: pointer"></audio>' +
+            '<button ng-click="display.userSelecting = true">Sélectionner un fichier audio</button>' +
+			'<lightbox show="display.userSelecting" on-close="userSelecting = false;">' +
 			'<media-library ' +
 				'visibility="selectedFile.visibility"' +
 				'ng-change="updateDocument()" ' +
@@ -1046,7 +305,8 @@ module.directive('soundSelect', function($compile){
 			'</media-library>' +
 			'</lightbox>' +
 			'</div>',
-		link: function(scope, element, attributes){
+        link: function (scope, element, attributes) {
+            scope.display = {};
 			scope.selectedFile = { file: {}, visibility: 'protected'};
 
 			scope.selectedFile.visibility = scope.$parent.$eval(attributes.visibility);
@@ -1056,7 +316,7 @@ module.directive('soundSelect', function($compile){
 			scope.selectedFile.visibility = scope.selectedFile.visibility.toLowerCase();
 
 			scope.updateDocument = function(){
-				scope.userSelecting = false;
+				scope.display.userSelecting = false;
 				var path = '/workspace/document/';
 				if(scope.selectedFile.visibility === 'public'){
 					path = '/workspace/pub/document/'
@@ -1255,56 +515,6 @@ module.directive('preview', function($compile){
 		}
 });
 
-module.directive('bindHtml', function($compile){
-	return {
-		restrict: 'A',
-		scope: {
-			bindHtml: '='
-		},
-		link: function(scope, element){
-			scope.$watch('bindHtml', function(newVal){
-				var htmlVal = $('<div>' + (newVal || '') + '</div>')
-				//Remove resizable attributes
-				htmlVal.find('[resizable]').removeAttr('resizable').css('cursor', 'initial');
-				htmlVal.find('[bind-html]').removeAttr('bind-html');
-				htmlVal.find('[ng-include]').removeAttr('ng-include');
-				htmlVal.find('[ng-transclude]').removeAttr('ng-transclude');
-				var htmlContent = htmlVal[0].outerHTML;
-				if (!window.MathJax && !(window as any).MathJaxLoading) {
-				    (window as any).MathJaxLoading = true;
-                    http().loadScript('/infra/public/mathjax/MathJax.js').then(function () {
-						(window as any).MathJaxLoading = false;
-						window.MathJax.Hub.Config({
-							messageStyle: 'none',
-							tex2jax: { preview: 'none' },
-							jax: ["input/TeX", "output/CommonHTML"],
-							extensions: ["tex2jax.js", "MathMenu.js", "MathZoom.js"],
-							TeX: {
-								extensions: ["AMSmath.js", "AMSsymbols.js", "noErrors.js", "noUndefined.js"]
-							}
-						});
-						window.MathJax.Hub.Typeset();
-					});
-                }
-				element.html($compile(htmlContent)(scope.$parent));
-				//weird browser bug with audio tags
-				element.find('audio').each(function(index, item){
-					var parent = $(item).parent();
-					$(item)
-						.attr("src", item.src)
-                        .attr('preload', 'none')
-						.detach()
-						.appendTo(parent);
-				});
-
-				if(window.MathJax && window.MathJax.Hub){
-					window.MathJax.Hub.Typeset();
-				}
-			});
-		}
-	}
-});
-
 module.directive('portal', function($compile){
 	return {
 		restrict: 'E',
@@ -1371,8 +581,7 @@ module.directive('skinSrc', function($compile){
 			if(!$('#theme').attr('href')){
 				return;
 			}
-			var skinPath = $('#theme').attr('href').split('/');
-			var path = skinPath.slice(0, skinPath.length - 2).join('/');
+			var path = skin.basePath;
 			$attributes.$observe('skinSrc', function(){
 				if($attributes.skinSrc.indexOf('http://') === -1 && $attributes.skinSrc.indexOf('https://') === -1 && $attributes.skinSrc.indexOf('/workspace/') === -1){
 					$element.attr('src', path + $attributes.skinSrc);
@@ -1493,61 +702,6 @@ module.directive('topNotification', function(){
 	}
 });
 
-module.directive('recorder', function(){
-	return {
-		restrict: 'E',
-		scope: {
-			ngModel: '=',
-			format: '@',
-			onUpload: '&'
-		},
-		templateUrl: '/' + appPrefix + '/public/template/entcore/recorder.html',
-		link: function(scope, element, attributes){
-			scope.recorder = recorder;
-			if(attributes.protected !== undefined){
-				recorder.protected = true;
-			}
-			recorder.state(function(){
-				scope.$apply('recorder');
-			});
-			scope.switchRecord = function(){
-				if(recorder.status === 'recording'){
-					recorder.pause();
-				}
-				else{
-					recorder.record();
-				}
-			};
-			scope.time = function(){
-				var minutes = parseInt(recorder.elapsedTime / 60);
-				if(minutes < 10){
-					minutes = '0' + minutes;
-				}
-				var seconds = parseInt(recorder.elapsedTime % 60);
-				if(seconds < 10){
-					seconds = '0' + seconds;
-				}
-				return minutes + ':' + seconds;
-			};
-			scope.switchPlay = function(){
-				if(recorder.status === 'playing'){
-					recorder.pause();
-				}
-				else{
-					recorder.play();
-				}
-			};
-			scope.saveRecord = function(){
-				recorder.save(function(doc){
-					scope.ngModel = doc;
-					scope.onUpload();
-					scope.$apply();
-				});
-			};
-		}
-	}
-});
-
 module.directive('dropDown', function($compile, $timeout){
 	return {
 		restrict: 'E',
@@ -1646,119 +800,6 @@ module.directive('dropDown', function($compile, $timeout){
 	}
 });
 
-module.directive('autocomplete', function($compile, $timeout){
-	return {
-		restrict: 'E',
-		replace: true,
-		scope: {
-			options: '&',
-			ngModel: '=',
-            ngChange: '&',
-            search: '=?'
-		},
-		template: '' +
-			'<div class="row">' +
-				'<input type="text" class="twelve cell" ng-model="search" translate attr="placeholder" placeholder="search" autocomplete="off" />' +
-				'<div data-drop-down class="drop-down autocomplete">' +
-					'<div>' +
-						'<ul class="ten cell right-magnet">' +
-							'<li ng-repeat="option in match | limitTo:10" ng-model="option">[[option.toString()]]</li>' +
-						'</ul>' +
-					'</div>' +
-				'</div>' +
-			'</div>',
-        link: function (scope, element, attributes) {
-            var token;
-			if(attributes.autocomplete === 'off'){
-				return;
-			}
-			var dropDownContainer = element.find('[data-drop-down]');
-            var linkedInput = element.find('input');
-            scope.search = '';
-			scope.match = [];
-
-            scope.setDropDownHeight = function () {
-                var liHeight = 0;
-                var max = Math.min(10, scope.match.length);
-                dropDownContainer.find('li').each(function (index, el) {
-                    liHeight += $(el).height();
-                    return index < max;
-                })
-                dropDownContainer.height(liHeight)
-            };
-
-            var placeDropDown = function () {
-                var pos = linkedInput.offset();
-                var width = linkedInput.width() +
-                    parseInt(linkedInput.css('padding-right')) +
-                    parseInt(linkedInput.css('padding-left')) +
-                    parseInt(linkedInput.css('border-width') || 1) * 2;
-                var height = linkedInput.height() +
-                    parseInt(linkedInput.css('padding-top')) +
-                    parseInt(linkedInput.css('padding-bottom')) +
-                    parseInt(linkedInput.css('border-height') || 1) * 2;
-
-                pos.top = pos.top + height;
-                dropDownContainer.offset(pos);
-                dropDownContainer.width(width);
-                $timeout(function () {
-                    scope.setDropDownHeight();
-                }, 1);
-
-                token = requestAnimationFrame(placeDropDown);
-            };
-
-			scope.$watch('search', function(newVal){
-				if(!newVal){
-					scope.match = [];
-					dropDownContainer.height("");
-					dropDownContainer.addClass('hidden');
-					return;
-				}
-				scope.match = _.filter(scope.options(), function(option){
-					var words = newVal.split(' ');
-					return _.find(words, function(word){
-						var formattedOption = lang.removeAccents(option.toString()).toLowerCase();
-						var formattedWord = lang.removeAccents(word).toLowerCase();
-						return formattedOption.indexOf(formattedWord) === -1
-					}) === undefined;
-				});
-				if(!scope.match || scope.match.length === 0){
-					dropDownContainer.height("");
-					dropDownContainer.addClass('hidden');
-					return;
-				}
-                dropDownContainer.removeClass('hidden');
-                cancelAnimationFrame(token);
-                placeDropDown();
-			});
-
-            element.parent().on('remove', function () {
-                cancelAnimationFrame(token);
-				dropDownContainer.remove();
-			});
-            element.find('input').on('blur', function () {
-                cancelAnimationFrame(token);
-				setTimeout(function(){
-					scope.search = '';
-				}, 200);
-			});
-			dropDownContainer.detach().appendTo('body');
-
-			dropDownContainer.on('click', 'li', function(e){
-				scope.ngModel = $(this).scope().option;
-				scope.search = '';
-				scope.$apply('ngModel');
-				scope.$eval(scope.ngChange);
-				scope.$apply('ngModel');
-                dropDownContainer.addClass('hidden');
-                cancelAnimationFrame(token);
-			});
-			dropDownContainer.attr('data-opened-drop-down', true);
-		}
-	}
-});
-
 module.directive('dropDownButton', function(){
 	return {
 		restrict: 'E',
@@ -1800,7 +841,7 @@ module.directive('loadingIcon', function($compile){
 			var addImage = function(){
                 if($('#theme').length === 0)
                     return;
-				var loadingIllustrationPath = $('#theme').attr('href').split('/theme.css')[0] + '/../img/icons/anim_loading_small.gif';
+				var loadingIllustrationPath = skin.basePath + '/img/icons/anim_loading_small.gif';
 				$('<img>')
 					.attr('src', loadingIllustrationPath)
 					.attr('class', $attributes.class)
@@ -1817,7 +858,7 @@ module.directive('loadingIcon', function($compile){
 
             if($attributes.onlyLoadingIcon === undefined){
     			http().bind('request-ended.' + $attributes.request, function(e){
-    				var loadingDonePath = $('#theme').attr('href').split('/theme.css')[0] + '/../img/icons/checkbox-checked.png';
+    				var loadingDonePath = skin.basePath + '/img/icons/checkbox-checked.png';
     				$element.find('.loading-icon').remove();
     				$('<img>')
     					.attr('src', loadingDonePath)
@@ -1838,7 +879,7 @@ module.directive('loadingPanel', function($compile){
 		link: function($scope, $element, $attributes){
 			$attributes.$observe('loadingPanel', function(val) {
 				http().bind('request-started.' + $attributes.loadingPanel, function(e){
-					var loadingIllustrationPath = $('#theme').attr('href').split('/theme.css')[0] + '/../img/illustrations/loading.gif';
+					var loadingIllustrationPath = skin.basePath + '/img/illustrations/loading.gif';
 					if($element.children('.loading-panel').length === 0){
 						$element.append('<div class="loading-panel">' +
 							'<h1>' + lang.translate('loading') + '</h1>' +
@@ -1850,30 +891,6 @@ module.directive('loadingPanel', function($compile){
 				http().bind('request-ended.' + $attributes.loadingPanel, function(e){
 					$element.find('.loading-panel').remove();
 				})
-			});
-		}
-	}
-});
-
-module.directive('workflow', function($compile){
-	return {
-		restrict: 'A',
-		link: function(scope, element, attributes){
-			attributes.$observe('workflow', function(){
-				var auth = attributes.workflow.split('.');
-				var right = model.me.workflow;
-				auth.forEach(function(prop){
-					right = right[prop];
-				});
-				var content = element.children();
-				if(!right){
-					content.remove();
-					element.hide();
-				}
-				else{
-					element.show();
-					element.append(content);
-				}
 			});
 		}
 	}
@@ -1894,53 +911,6 @@ module.directive('userRole', function($compile){
 	}
 });
 
-module.directive('tooltip', function($compile){
-	return {
-		restrict: 'A',
-		link: function(scope, element, attributes){
-			var tip;
-			element.on('mouseover', function(){
-				if(!attributes.tooltip || attributes.tooltip === 'undefined'){
-					return;
-				}
-				tip = $('<div />')
-					.addClass('tooltip')
-					.html($compile('<div class="arrow"></div><div class="content">' + lang.translate(attributes.tooltip) + '</div> ')(scope))
-					.appendTo('body');
-				scope.$apply();
-
-				var top = parseInt(element.offset().top + element.height());
-				var left = parseInt(element.offset().left + element.width() / 2 - tip.width() / 2);
-				if(top < 5){
-					top = 5;
-				}
-				if(left < 5){
-					left = 5;
-				}
-				tip.offset({
-					top: top,
-					left: left
-				});
-				tip.fadeIn();
-				element.one('mouseout', function(){
-					tip.fadeOut(200, function(){
-						$(this).remove();
-					})
-				});
-			});
-
-			scope.$on("$destroy", function() {
-				if(tip){
-					tip.remove();
-				}
-
-				element.off();
-			});
-
-		}
-	}
-});
-
 module.directive('behaviour', function($compile){
 	return {
 		restrict: 'E',
@@ -1951,7 +921,7 @@ module.directive('behaviour', function($compile){
 			resource: '='
 		},
 		link: function($scope, $element, $attributes){
-			console.log('This directive is deprecated. Please use "authorize" instead.');
+			console.error('This directive is deprecated. Please use "authorize" instead.');
 			if(!$attributes.name){
 				throw "Behaviour name is required";
 			}
@@ -1968,55 +938,6 @@ module.directive('behaviour', function($compile){
 				}
 
 			});
-		}
-	}
-});
-
-module.directive('resourceRight', function($compile){
-	return {
-		restrict: 'EA',
-		template: '<div></div>',
-		replace: false,
-		transclude: true,
-		scope: {
-			resource: '=',
-			name: '@'
-		},
-		controller: function($scope, $transclude){
-			this.transclude = $transclude;
-		},
-		link: function(scope, element, attributes, controller){
-			if(attributes.name === undefined){
-				throw "Right name is required";
-			}
-			var content = element.children('div');
-			var transcludeScope;
-
-			var switchHide = function(){
-				var hide = attributes.name && (scope.resource instanceof Array && _.find(scope.resource, function(resource){ return !resource.myRights || resource.myRights[attributes.name] === undefined; }) !== undefined) ||
-					(scope.resource instanceof Model && (!scope.resource.myRights || scope.resource.myRights[attributes.name] === undefined));
-
-				if(hide){
-					if(transcludeScope){
-						transcludeScope.$destroy();
-						transcludeScope = null;
-					}
-					content.children().remove();
-					element.hide();
-				}
-				else{
-					if(!transcludeScope){
-						controller.transclude(function(clone, newScope) {
-							transcludeScope = newScope;
-							content.append(clone);
-						});
-					}
-					element.show();
-				}
-			};
-
-			attributes.$observe('name', switchHide);
-			scope.$watchCollection('resource', switchHide);
 		}
 	}
 });
@@ -2053,53 +974,6 @@ module.directive('authorize', function($compile){
 	}
 });
 
-module.directive('bottomScroll', function($compile){
-	return {
-		restrict: 'A',
-		link: function (scope, element, attributes) {
-		    var scrollElement = element;
-		    var getContentHeight = function () {
-		        return element[0].scrollHeight;
-		    };
-		    if (element.css('overflow') !== 'auto') {
-		        scrollElement = $(window);
-		        var getContentHeight = function () {
-		            return $(document).height();
-		        };
-		    }
-		    scrollElement.scroll(function () {
-		        var scrollHeight = scrollElement[0].scrollY || scrollElement[0].scrollTop;
-				//adding ten pixels to account for system specific behaviours
-				scrollHeight += 10;
-
-				if (getContentHeight() - scrollElement.height() < scrollHeight) {
-				    scope.$eval(attributes.bottomScroll);
-				    if (!scope.$$phase) {
-				        scope.$apply();
-					}
-				}
-			})
-		}
-	}
-});
-
-module.directive('bottomScrollAction', function($compile){
-    return {
-        restrict: 'A',
-        link: function($scope, $element, $attributes){
-            $element[0].onscroll = function(){
-                if(this.scrollHeight - this.scrollTop === this.clientHeight){
-                    this.scrollTop = this.scrollTop - 1
-                    $scope.$eval($attributes.bottomScrollAction);
-                    if(!$scope.$$phase){
-                        $scope.$apply();
-                    }
-                }
-            }
-        }
-    }
-});
-
 module.directive('drawingZone', function(){
 	return function($scope, $element, $attributes){
 		$element.addClass('drawing-zone');
@@ -2117,590 +991,6 @@ module.directive('resizable', function(){
 					vertical: element.attr('vertical-resize-lock')
 				}
 			});
-		}
-	}
-});
-
-module.directive('drawingGrid', function(){
-	return function(scope, element, attributes){
-		element.addClass('drawing-grid');
-		element.on('click', function(e){
-			element.parents('grid-cell').data('lock', true);
-
-			$('body').on('click.lock', function(){
-				element.parents('grid-cell').data('lock', false);
-				$('body').unbind('click.lock')
-			});
-		});
-	};
-});
-
-module.directive('gridRow', function($compile){
-	return {
-		restrict: 'E',
-		transclude: true,
-		replace: true,
-		template: '<div class="row grid-row" ng-transclude></div>',
-		scope: {
-			index: '='
-		},
-		link: function(scope, element, attributes){
-			element.addClass('row');
-		}
-	}
-});
-
-module.directive('gridCell', function($compile){
-	return {
-		restrict: 'E',
-		scope: {
-			w: '=',
-			h: '=',
-			index: '=',
-			row: '=',
-			className: '=',
-			onIndexChange: '&',
-			onRowChange: '&'
-		},
-		template: '<div class="media-wrapper"><div class="media-container" ng-class="className" ng-transclude></div></div>',
-		transclude: true,
-		link: function (scope, element, attributes) {
-			var cellSizes = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-			scope.$watch('w', function(newVal, oldVal){
-				element.addClass(cellSizes[newVal]);
-				if(newVal !== oldVal){
-					element.removeClass(cellSizes[oldVal]);
-				}
-			});
-
-			scope.$watch('h', function(newVal, oldVal){
-				if(ui.breakpoints.checkMaxWidth("tablette")){
-			        element.removeClass('height-' + cellSizes[newVal]);
-			    }
-			    else {
-			        element.addClass('height-' + cellSizes[newVal]);
-			    }
-				if(newVal !== oldVal){
-					element.removeClass('height-' + cellSizes[oldVal]);
-				}
-			});
-
-			$(window).on('resize', function () {
-				if(ui.breakpoints.checkMaxWidth("tablette")){
-			        element.removeClass('height-' + cellSizes[scope.h]);
-			    }
-			    else {
-			        element.addClass('height-' + cellSizes[scope.h]);
-			    }
-			});
-
-			scope.$watch('className', function(newVal){
-				newVal.forEach(function(cls){
-					element.addClass(cls);
-				});
-			});
-
-			element.on('editor-focus', 'editor', function () {
-			    element.css({ overflow: 'visible', height: 'auto' });
-			    element.find('.media-wrapper').css({ position: 'relative', overflow: 'visible', height: 'auto' });
-			});
-
-			element.on('editor-blur', 'editor', function () {
-			    element.css({ overflow: '', height: '' });
-			    element.find('.media-wrapper').css({ position: '', overflow: '', height: '' });
-			});
-		}
-	}
-});
-
-interface Directions{
-	horizontal?: boolean;
-	vertical?: boolean;
-}
-
-module.directive('gridResizable', function($compile){
-	return {
-		restrict: 'A',
-		link: function(scope, element, attributes){
-			$('body').css({
-				'-webkit-user-select': 'none',
-				'-moz-user-select': 'none',
-				'user-select' : 'none'
-			});
-
-			var cellSizes = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-			var resizeLimits: Directions = {};
-			var parent = element.parents('.drawing-grid');
-
-			element.addClass('grid-media');
-
-			var lock: Directions = {};
-
-			//cursor styles to indicate resizing possibilities
-			element.on('mouseover', function(e){
-				element.on('mousemove', function(e){
-					if(element.data('resizing') || element.data('lock')){
-						return;
-					}
-
-					lock.vertical = (element.find('grid-cell, sniplet, [vertical-lock]').length > 0);
-
-					var mouse = { x: e.pageX, y: e.pageY };
-					resizeLimits = {
-						horizontal:  element.offset().left + element.width() + 5 > mouse.x && mouse.x > element.offset().left + element.width() - 15,
-						vertical: (element.offset().top + (element.height() + parseInt(element.css('padding-bottom'))) +
-							5 > mouse.y && mouse.y > element.offset().top + (element.height() + parseInt(element.css('padding-bottom'))) - 15) && !lock.vertical
-					};
-
-					var orientations = {
-						'ns': resizeLimits.vertical,
-						'ew': resizeLimits.horizontal,
-						'nwse': resizeLimits.vertical && resizeLimits.horizontal
-
-					};
-
-					var cursor = '';
-					for(var orientation in orientations){
-						if(orientations[orientation]){
-							cursor = orientation;
-						}
-					}
-
-					if(cursor){
-						cursor = cursor + '-resize';
-					}
-
-					element.css({ cursor: cursor });
-					element.children('*').css({ cursor: cursor });
-				});
-				element.on('mouseout', function(e){
-					element.unbind('mousemove');
-				});
-			});
-
-			//actual resize
-			element.on('mousedown.resize', function(e){
-				if(element.data('lock') === true || element.data('resizing') === true || (!resizeLimits.horizontal && !resizeLimits.vertical)){
-					return;
-				}
-				var mouse = { y: e.pageY, x: e.pageX };
-				var cellWidth = parseInt(element.parent().width() / 12);
-				var cells = element.parent().children('grid-cell');
-				var interrupt = false;
-				var parentData = {
-					pos: element.parents('.grid-row').offset(),
-					size: {
-						width: element.parents('.grid-row').width(),
-						height: element.parents('.grid-row').height()
-					}
-				};
-
-				if(resizeLimits.horizontal || resizeLimits.vertical){
-					cells.data('lock', true);
-				}
-
-				function findResizableNeighbour(cell, step){
-					var neighbour = cell.next('grid-cell');
-					if(neighbour.length < 1){
-						return;
-					}
-					if(neighbour.width() - step <= cellWidth){
-						return findResizableNeighbour(neighbour, step);
-					}
-					else{
-						return neighbour;
-					}
-				}
-
-				function parentRemainingSpace(diff){
-					var rowWidth = element.parent().width();
-					var childrenSize = 0;
-					cells.each(function(index, cell){
-						childrenSize += $(cell).width();
-					});
-					return  rowWidth - (childrenSize + diff + 2 * cells.length);
-				}
-
-				e.preventDefault();
-
-				$(window).unbind('mousemove.drag');
-				$(window).on('mousemove.resize', function(e){
-					mouse = {
-						y: e.pageY,
-						x: e.pageX
-					};
-
-					if(element.data('resizing')){
-						return;
-					}
-
-					cells.trigger('startResize');
-					cells.removeClass('grid-media');
-
-					//this makes sure the cursor doesn't change when we move the mouse outside the element
-					$('.main').css({
-						'cursor': element.css('cursor')
-					});
-
-					element.unbind("click");
-
-					// the element height is converted in padding-bottom if vertical resize happens
-					// this is done in order to keep it compatible with the grid, which is based on padding
-					if(resizeLimits.vertical){
-						element.css({ 'padding-bottom': element.height() + 'px' });
-						element.height(0);
-					}
-
-					//animation for resizing
-					var resize = function(){
-						//current element resizing
-						var newWidth = 0; var newHeight = 0;
-						var p = element.offset();
-
-						//horizontal resizing
-						if(resizeLimits.horizontal){
-							var distance = mouse.x - p.left;
-							if(element.offset().left + distance > parentData.pos.left + parentData.size.width){
-								distance = (parentData.pos.left + parentData.size.width) - element.offset().left - 2;
-							}
-							newWidth = distance;
-							if (newWidth < cellWidth) {
-								newWidth = cellWidth;
-							}
-							var diff = newWidth - element.width();
-
-							//neighbour resizing
-							var remainingSpace = parentRemainingSpace(diff);
-							var neighbour = findResizableNeighbour(element, distance - element.width());
-
-							if(neighbour || remainingSpace >= 0){
-								if(neighbour && remainingSpace <= 0){
-									var neighbourWidth = neighbour.width() + remainingSpace;
-									if(neighbourWidth < cellWidth){
-										newWidth -= cellWidth - neighbourWidth;
-										neighbourWidth = cellWidth;
-									}
-									neighbour.width(neighbourWidth);
-								}
-								element.width(newWidth);
-							}
-						}
-
-						//vertical resizing
-						if(resizeLimits.vertical){
-							var distance = mouse.y - p.top;
-							newHeight = distance;
-							element.css({ 'padding-bottom': newHeight });
-						}
-
-						if(!interrupt){
-							requestAnimationFrame(resize);
-						}
-					};
-					resize();
-				});
-
-				$(window).on('mouseup.resize', function(){
-					cells.trigger('stopResize');
-					interrupt = true;
-
-					cells.each(function(index, cell){
-						var width = $(cell).width();
-						var height = parseInt($(cell).css('padding-bottom'));
-						if(height < cellWidth / 2){
-							height = 0;
-						}
-						var cellWIndex = Math.round(width * 12 / parentData.size.width);
-						var cellHIndex = Math.round(height * 12 / parentData.size.width);
-						var cellScope = angular.element(cell).scope();
-						cellScope.w = cellWIndex;
-						cellScope.h = cellHIndex;
-						cellScope.$apply('w');
-						cellScope.$apply('h');
-					});
-
-					setTimeout(function(){
-						cells.data('resizing', false);
-						cells.data('lock', false);
-						cells.attr('style', '');
-						cells.addClass('grid-media');
-						element.find('*').css({ cursor: 'inherit' });
-					}, 100);
-					$(window).unbind('mousemove.resize');
-					$(window).unbind('mouseup.resize');
-					$('.main').css({'cursor': ''})
-				});
-			});
-		}
-	}
-});
-
-module.directive('gridDraggable', function($compile){
-	return {
-		restrict: 'A',
-		link: function(scope, element, attributes){
-			element.attr('draggable', false);
-			element.on('mousedown', function(e){
-				var parent = element.parents('.drawing-grid');
-				if(element.data('lock') === true  || element.find('editor').data('lock') === true || parent.first().hasClass('blur-grid')){
-					return;
-				}
-
-				var interrupt = false;
-				var mouse = { y: e.clientY, x: e.clientX };
-				var cellSizes = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-				var row = element.parent();
-				var cells = row.children('grid-cell');
-				var parentData = {
-					width: element.parents('.row').width(),
-					height: element.parents('.row').height(),
-					left: parent.offset().left,
-					top: parent.offset().top
-				};
-				var elementPos = {
-					left: element.position().left,
-					top: element.position().top,
-					width: element.width(),
-					height: element.height() + parseInt(element.css('padding-bottom'))
-				};
-
-				function rowFull(row){
-					var cellsWidth = 0;
-					row.children('grid-cell').each(function(index, item){
-						cellsWidth += $(item).width();
-					});
-
-					return cellsWidth + elementPos.width > row.width();
-				}
-
-				$(window).on('mousemove.drag', function(e){
-					if(e.clientX === mouse.x && e.clientY === mouse.y){
-						return;
-					}
-					if(element.data('resizing') !== true && element.data('dragging') !== true){
-						element.trigger('startDrag');
-
-						var elementDistance = {
-							y: mouse.y - element.offset().top,
-							x: mouse.x - element.offset().left
-						};
-
-						$('body').css({
-							'-webkit-user-select': 'none',
-							'-moz-user-select': 'none',
-							'user-select' : 'none'
-						});
-
-						element.parent().height(element.height() + parseInt(element.css('padding-bottom')));
-
-						element.css({
-							'position': 'absolute',
-							'z-index': '900'
-						});
-
-						element.next({ 'margin-left': (element.width() - 2) + 'px' });
-
-						element.unbind("click");
-						element.find('img, button, div').css({ 'pointer-events': 'none' });
-						element.data('dragging', true);
-
-						moveElement(elementDistance);
-					}
-					mouse = {
-						y: e.clientY,
-						x: e.clientX
-					};
-				});
-
-				$(window).on('mouseup.drag', function(e){
-					element.trigger('stopDrag');
-					$('body').css({
-						'-webkit-user-select': 'initial',
-						'-moz-user-select': 'initial',
-						'user-select' : 'initial'
-					});
-					interrupt = true;
-					$('body').unbind('mouseup.drag');
-					$(window).unbind('mousemove.drag');
-
-					if(element.data('dragging') === true){
-						cells.removeClass('grid-media');
-						elementPos.left = element.position().left;
-						elementPos.top = element.offset().top;
-
-						var row = element.parent();
-
-						parent.find('.grid-row').each(function(index, item){
-							if(elementPos.top + elementPos.height / 2 > $(item).offset().top && elementPos.top + elementPos.height / 2 < $(item).offset().top + $(item).prev().height()){
-								if(!rowFull($(item))){
-									setTimeout(function(){
-										scope.row = angular.element(item).scope().index;
-										scope.$apply('row');
-										scope.onRowChange();
-									}, 0);
-								}
-								row = $(item);
-								cells = row.children('grid-cell');
-								return false;
-							}
-						});
-
-						var found = false;
-						var cellI = 0;
-						cells.each(function(index, item){
-							if(item === element[0]){
-								return;
-							}
-							if(parseInt($(item).css('margin-left')) > 0){
-								if(scope.index !== cellI){
-									scope.index = cellI;
-									scope.$apply('index');
-									if(row[0] === element.parent()[0]){
-										scope.onIndexChange();
-									}
-								}
-								found = true;
-								return false;
-							}
-							cellI ++;
-						});
-
-						if(!found){
-							var index = cells.length - 1;
-							if(scope.index !== index){
-								scope.index = index;
-								scope.$apply('index');
-								if(row[0] === element.parent()[0]){
-									scope.onIndexChange();
-								}
-							}
-						}
-					}
-
-					setTimeout(function(){
-						parent.find('grid-cell').css({ 'margin-left': '0' });
-						setTimeout(function(){
-							cells.addClass('grid-media');
-						}, 100);
-
-						element.data('dragging', false);
-						element.on('click', function(){
-							scope.$parent.$eval(attributes.ngClick);
-						});
-						element.find('img, button, div').css({ 'pointer-events': 'all' });
-						element.css({
-							position: '',
-							left: 'auto',
-							top: 'auto'
-						});
-						element.parent().attr('style', ' ');
-
-					}, 20);
-				});
-
-				var moveElement = function(elementDistance){
-					var parent = element.parents('.drawing-grid');
-					var newOffset = {
-						top: mouse.y - elementDistance.y,
-						left: mouse.x - elementDistance.x
-					};
-
-					element.offset(newOffset);
-
-					//preview new cells order
-					var row = element.parent();
-					parent.find('.grid-row').each(function(index, item){
-						if(newOffset.top + elementPos.height / 2 > $(item).offset().top && newOffset.top + elementPos.height / 2 < $(item).offset().top + $(item).prev().height()){
-							row = $(item);
-							return false;
-						}
-					});
-
-					parent.find('grid-cell').css({ 'margin-left': '0' });
-
-					cells = row.children('grid-cell');
-					if(row[0] === element.parent()[0] || !rowFull(row)){
-						var cumulatedWidth = row.offset().left;
-						cells.each(function(index, item){
-							if(item === element[0]){
-								return;
-							}
-							cumulatedWidth += $(item).width();
-							if(cumulatedWidth - $(item).width() / 2 > newOffset.left){
-								$(item).css({ 'margin-left': (elementPos.width - 2) + 'px' });
-								return false;
-							}
-						});
-					}
-
-					if(!interrupt){
-						requestAnimationFrame(function(){
-							moveElement(elementDistance);
-						});
-					}
-				};
-			});
-		}
-	}
-});
-
-module.directive('sniplet', function($parse, $timeout){
-	return {
-		restrict: 'E',
-		scope: true,
-		controller: function($scope, $timeout){
-			$timeout(function(){
-				Behaviours.loadBehaviours($scope.application, function(behaviours){
-					var snipletControllerExpansion = behaviours.sniplets[$scope.template].controller;
-					for(var prop in snipletControllerExpansion){
-						$scope[prop] = snipletControllerExpansion[prop];
-					}
-					if(typeof $scope.init === 'function'){
-						$scope.init();
-					}
-				});
-			}, 1);
-		},
-		template: "<div ng-include=\"'/' + application + '/public/template/behaviours/sniplet-' + template + '.html'\"></div>",
-		link: function(scope, element, attributes){
-			scope.application = attributes.application;
-			scope.template = attributes.template;
-			scope.source = scope.$eval(attributes.source);
-		}
-	}
-});
-
-module.directive('snipletSource', function($parse, $timeout){
-	return {
-		restrict: 'E',
-		scope: true,
-		template: "<div ng-include=\"'/' + application + '/public/template/behaviours/sniplet-source-' + template + '.html'\"></div>",
-		controller: function($scope, $timeout){
-			$scope.setSnipletSource = function(source){
-				$scope.ngModel.assign($scope, source);
-				$scope.ngChange();
-			};
-
-			$timeout(function(){
-				Behaviours.loadBehaviours($scope.application, function(behaviours){
-					var snipletControllerExpansion = behaviours.sniplets[$scope.template].controller;
-					for(var prop in snipletControllerExpansion){
-						$scope[prop] = snipletControllerExpansion[prop];
-					}
-
-					if(typeof $scope.initSource === 'function'){
-						$scope.initSource();
-					}
-				});
-			}, 1);
-		},
-		link: function(scope, element, attributes){
-			scope.application = attributes.application;
-			scope.template = attributes.template;
-			scope.ngModel = $parse(attributes.ngModel);
-			scope.ngChange = function(){
-				scope.$eval(attributes.ngChange);
-			}
 		}
 	}
 });
@@ -2820,110 +1110,6 @@ module.directive('sharePanel', function($compile){
 			$scope.shareTable = '/' + appPrefix + '/public/template/entcore/share-panel-table.html';
 		}
 	}
-});
-
-
-module.directive('sortableList', function($compile){
-	return {
-		restrict: 'A',
-		controller: function(){},
-		compile: function(element, attributes, transclude){
-			var initialHtml = element.html();
-			return function(scope, element, attributes){
-				scope.updateElementsOrder = function(el){
-					var sortables = element.find('[sortable-element]');
-					sortables.removeClass('animated');
-					sortables.each(function(index, item){
-						if(parseInt($(item).css('margin-top')) > 0){
-							el.detach().insertBefore(item);
-						}
-					});
-
-					if(el.offset().top > sortables.last().offset().top + sortables.last().height()){
-						element.append(el.detach());
-					}
-
-					//get new elements order
-					sortables = element.find('[sortable-element]');
-					sortables.each(function(index, item){
-						var itemScope = angular.element(item).scope();
-						if(index !== itemScope.ngModel){
-							itemScope.ngModel = index;
-						}
-					});
-
-					sortables.attr('style', '');
-					element.html($compile(initialHtml)(scope));
-					scope.$apply();
-				};
-			}
-		}
-	}
-});
-
-module.directive('sortableElement', function($parse){
-	return {
-		scope: {
-			ngModel: '=',
-			ngChange: '&'
-		},
-		require: '^sortableList',
-		template: '<div ng-transclude></div>',
-		transclude: true,
-		link: function(scope, element, attributes){
-			var sortables;
-			scope.$watch('ngModel', function(newVal, oldVal){
-				if(newVal !== oldVal && typeof scope.ngChange === 'function'){
-					scope.ngChange();
-				}
-			});
-			ui.extendElement.draggable(element, {
-				lock: {
-					horizontal: true
-				},
-				mouseUp: function(){
-					scope.$parent.updateElementsOrder(element);
-
-					element.on('click', function(){
-						scope.$parent.$eval(attributes.ngClick);
-					});
-
-				},
-				startDrag: function(){
-					sortables = element.parents('[sortable-list]').find('[sortable-element]');
-					sortables.attr('style', '');
-					setTimeout(function(){
-						sortables.addClass('animated');
-					}, 20);
-					element.css({ 'z-index': 1000 });
-				},
-				tick: function(){
-					var moved = [];
-					sortables.each(function(index, sortable){
-						if(element[0] === sortable){
-							return;
-						}
-						var sortableTopDistance = $(sortable).offset().top - parseInt($(sortable).css('margin-top'));
-						if(element.offset().top + element.height() / 2 > sortableTopDistance &&
-							element.offset().top + element.height() / 2 < sortableTopDistance + $(sortable).height()){
-							$(sortable).css({ 'margin-top': element.height()});
-							moved.push(sortable);
-						}
-						//first widget case
-						if(element.offset().top + element.height() / 2 - 2 < sortableTopDistance && index === 0){
-							$(sortable).css({ 'margin-top': element.height()});
-							moved.push(sortable);
-						}
-					});
-					sortables.each(function(index, sortable){
-						if(moved.indexOf(sortable) === -1){
-							$(sortable).css({ 'margin-top': 0 + 'px' });
-						}
-					})
-				}
-			});
-		}
-	};
 });
 
 module.directive('widgets', function($compile){
@@ -3229,87 +1415,6 @@ module.directive('completeClick', function($parse){
 	}
 });
 
-module.directive('dragItem', function(){
-	return{
-		restrict: 'A',
-		// lier le scope au parent
-		// pas de propriété scope
-		link: function(scope, element, attributes){
-			var drag = scope.$eval(attributes.dragItem);
-			var matchedElement = undefined;
-            var firstTick = true;
-
-            scope.$watch(function () {
-                return scope.$eval(attributes.dragItem);
-            }, function (newVal) {
-                drag = newVal;
-            });
-
-			ui.extendElement.draggable(element, {
-				mouseUp: function(e){
-					$("[drop-item]").off("mouseout");
-					//declencher l'evenement drop
-					$('body').removeClass('dragging');
-					if(matchedElement){
-						matchedElement.trigger("drop", [drag]);
-					}
-					scope.$apply();
-					firstTick = true;
-					element.attr('style', '');
-				},
-				dragOver: function(item){
-                    item.addClass('dragover');
-                    matchedElement = item;
-                },
-                dragOut: function(item){
-                    item.removeClass('dragover');
-                    matchedElement = undefined;
-                },
-                tick: function() {
-                    if (firstTick) {
-                        $('[drop-item]').removeClass('drag-over');
-                        element.css({
-                            'pointer-events': 'none'
-                        });
-                        $('body').addClass('dragging');
-                        scope.$apply();
-
-                        firstTick = false;
-                    }
-                }
-
-			})
-
-
-		}
-	}
-})
-module.directive('dropItem', function($parse) {
-    return {
-        restrict: 'A',
-        link: function(scope, element, attributes) {
-            var dropConditionFn = $parse(attributes.dropcondition);
-            element.on("dragover", function(event) {
-                if (attributes.dropcondition === undefined || dropConditionFn(scope, {
-                        $originalEvent: event.originalEvent
-                    })) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    element.addClass("droptarget")
-                }
-            });
-            element.on("dragout", function(event) {
-                element.removeClass("droptarget")
-            });
-            element.on('drop', function(event, item) {
-                scope.$eval(attributes.dropItem, {
-                    $item: item
-                });
-                scope.$apply();
-            })
-        }
-    }
-})
 module.directive('dragstart', function($parse){
     return {
         restrict: 'A',
@@ -3537,194 +1642,6 @@ module.directive('attachments', function($parse){
 					});
 				});
 			};
-		}
-	}
-});
-
-module.directive('wizard', function(){
-	return {
-		restrict: 'E',
-		templateUrl: '/' + appPrefix + '/public/template/entcore/wizard.html',
-		scope: {
-			onCancel: '&',
-			onFinish: '&',
-			finishCondition: '&'
-		},
-		transclude: true,
-		compile: function(element, attributes, transclude){
-			return function(scope, element, attributes){
-				element.find('div.steps').hide();
-				scope.currentStep = 0;
-
-				var currentStepContent;
-				var steps = element.find('div.steps step');
-				scope.nbSteps = steps.length;
-
-				var nav = element.find('nav.steps');
-				nav.append('<ul></ul>');
-				steps.each(function(index, item){
-					nav.children('ul').append('<li>' + $(item).find('h1').html() + '</li>');
-				});
-
-				function displayCurrentStep(){
-					transclude(scope.$parent.$new(), function(content){
-						currentStepContent = _.filter(content, function(el){
-							return el.tagName === 'STEP';
-						})[scope.currentStep];
-						currentStepContent = $(currentStepContent);
-						element
-							.find('.current-step .step-content')
-							.html('')
-							.append(currentStepContent);
-					});
-
-					$('nav.steps li').removeClass('active');
-					$(element.find('nav.steps li')[scope.currentStep]).addClass('active');
-				}
-
-				scope.nextCondition = function(){
-					var stepScope = angular.element(currentStepContent[0]).scope();
-					if(typeof stepScope.nextCondition() === 'undefined')
-						return true;
-					return stepScope.nextCondition();
-				};
-
-				scope.nextStep = function(){
-					if(!scope.nextCondition())
-						return
-
-					var stepScope = angular.element(currentStepContent[0]).scope();
-					stepScope.onNext();
-					scope.currentStep++;
-					displayCurrentStep();
-				};
-
-				scope.previousStep = function(){
-					var stepScope = angular.element(currentStepContent[0]).scope();
-					stepScope.onPrevious();
-					scope.currentStep--;
-					displayCurrentStep();
-				};
-
-				scope.cancel = function(){
-					scope.currentStep = 0;
-					displayCurrentStep();
-					scope.onCancel();
-				};
-
-				scope.checkFinishCondition = function(){
-					if(typeof scope.finishCondition() === 'undefined')
-						return true;
-					return scope.finishCondition();
-				};
-
-				scope.finish = function(){
-					if(!scope.checkFinishCondition())
-						return
-
-					scope.currentStep = 0;
-					displayCurrentStep();
-					scope.onFinish();
-				};
-
-				displayCurrentStep();
-			}
-		}
-	}
-});
-
-module.directive('step', function(){
-	return {
-		restrict: 'E',
-		transclude: true,
-		scope: {
-			onNext: '&',
-			onPrevious: '&',
-			nextCondition: '&'
-		},
-		template: '<div class="step" ng-transclude></div>'
-	}
-});
-
-module.directive('carousel', function(){
-	return {
-		scope: {
-			items: '='
-		},
-		restrict: 'E',
-		templateUrl: '/' + appPrefix + '/public/template/entcore/carousel.html',
-		link: function(scope, element, attributes){
-			var interrupt = 0;
-			if(attributes.transition){
-				element.addClass(scope.$parent.$eval(attributes.transition));
-			}
-			if(attributes.buttons){
-				element.addClass(scope.$parent.$eval(attributes.buttons));
-			}
-
-			scope.current = {
-				image: scope.items[0],
-				index: 0
-			};
-			scope.images = _.filter(scope.items, function(item){
-				return item.icon !== undefined;
-			});
-			scope.$watchCollection('items', function(newVal){
-				scope.images = _.filter(scope.items, function(item){
-					return item.icon !== undefined;
-				});
-				scope.current = {
-					image: scope.items[0],
-					index: 0
-				};
-			});
-			scope.openCurrentImage = function(){
-				window.location = scope.current.image.link;
-			};
-			scope.openSelectImage = function(item, index){
-				if(scope.current.image === item){
-					scope.openCurrentImage();
-				}
-				else{
-					scope.current.image = item;
-					scope.current.index = index;
-				}
-				cancelAnimationFrame(animrequest);
-				imageHeight();
-				interrupt --;
-				setTimeout(infiniteRun, 5000);
-			};
-			scope.getPilePosition = function(index){
-				if(index < scope.current.index){
-					return 100 + index;
-				}
-				else{
-					return 100 - index;
-				}
-			};
-			var animrequest;
-			var imageHeight = function(){
-				element.find('.current img').height(element.find('.current .image-container').height());
-				animrequest = requestAnimationFrame(imageHeight);
-			}
-			var infiniteRun = function(){
-				cancelAnimationFrame(animrequest);
-				if(interrupt < 0){
-					interrupt ++;
-					return;
-				}
-				scope.current.index ++;
-				if(scope.current.index === scope.items.length){
-					scope.current.index = 0;
-				}
-				scope.current.image = scope.items[scope.current.index];
-				scope.$apply('current');
-
-				imageHeight();
-
-				setTimeout(infiniteRun, 4000);
-			};
-			infiniteRun();
 		}
 	}
 });
@@ -4391,7 +2308,7 @@ module.directive('microbox', function($compile){
 			var content = element.html();
 
 			return function(scope, element, attributes){
-				var title = lang.translate(attributes.title);
+				var microtitle = lang.translate(attributes.microtitle);
 				var closeBox = lang.translate(attributes.close);
 				element.addClass('zero-mobile');
 
@@ -4408,7 +2325,7 @@ module.directive('microbox', function($compile){
 								'</div></div>');
 
 							$('.microbox-material').html($compile(content)(scope));
-							element.after('<button class="microbox">'+ title +'</button>');
+							element.after('<button class="microbox">'+ microtitle +'</button>');
 
 							$('button.microbox').on('click', function(){
 								if($('.microbox-wrapper').hasClass('zero')){
@@ -4486,7 +2403,7 @@ var checkToolDelay = (function(){
 			setTimeout(function(){
 				scope.$apply();
 				applyAllowed = true;
-			}, 500);
+			}, 200);
 		}
 
 	}
@@ -4535,98 +2452,6 @@ module.directive('checkTool', function () {
 	}
 });
 
-
-module.directive('explorer', function () {
-	return {
-		restrict: 'E',
-		transclude: true,
-		scope: {
-				ngModel: '=',
-				ngClick: '&',
-				ngChange: '&',
-				onOpen: '&',
-		},
-		template:'<div class="explorer" ng-transclude></div>',
-		link: function (scope, element, attributes) {
-
-			function select(){
-				scope.ngModel = !scope.ngModel;
-				if (scope.ngModel) {
-					element.addClass('selected')
-				}else {
-					element.removeClass('selected')
-				}
-				if (scope.ngClick) {
-					scope.ngClick();
-				}
-				if (scope.ngChange) {
-					scope.ngChange();
-				}
-				scope.$apply('ngModel');
-			}
-
-			$('body').on('click', function(e){
-				if($(e.target).parents('explorer, .toggle, .lightbox').length ===0 && e.target.nodeName!=="EXPLORER"){
-					scope.ngModel = false;
-					element.removeClass('selected');
-					scope.$apply('ngModel');
-				}
-			})
-
-			function setGest(apply?){
-				if(ui.breakpoints.checkMaxWidth("tablette")){
-
-					element.off('click dblclick')
-					ui.extendElement.touchEvents(element);
-
-					element.on('contextmenu', function(event){
-						event.preventDefault()
-					})
-
-					element.on('click', function(e, position) {
-                        select();
-                        scope.$apply('ngModel');
-                    })
-
-                    element.on('doubletap dblclick', function() {
-                        scope.ngModel = false;
-                        scope.onOpen();
-                        scope.$apply('ngModel');
-                    });
-
-					// element.on('longclick', function(e, position){
-					// 	select();
-					// 	scope.$apply();
-					// })
-					// element.on('click', function(){
-					// 	scope.ngModel = false;
-					// 	scope.onOpen();
-					// 	scope.$apply();
-					// });
-
-				}else{
-					element.off('click dblclick doubletap contextmenu')
-
-					element.on('click', function(){
-						select();
-						scope.$apply('ngModel');
-					});
-					element.on('dblclick', function(){
-						scope.onOpen();
-						scope.ngModel = false;
-						scope.$apply('ngModel');
-					})
-
-				}
-			}
-			setGest();
-			$(window).on('resize', function(){ setGest(true) });
-
-		}
-	}
-});
-
-
 module.directive('subtitle', function () {
 	return {
 		restrict: 'A',
@@ -4666,9 +2491,9 @@ module.controller('Account', ['$scope', function($scope) {
 	$scope.refreshAvatar = function(){
 		http().get('/userbook/api/person', {}, {requestName: "refreshAvatar"}).done(function(result){
 			$scope.avatar = result.result['0'].photo;
-			if(!$scope.avatar || $scope.avatar === 'no-avatar.jpg'){
-				$scope.avatar = '/directory/public/img/no-avatar.jpg';
-			}
+			if (!$scope.avatar || $scope.avatar === 'no-avatar.jpg' || $scope.avatar === 'no-avatar.svg') {
+                $scope.avatar = skin.basePath + '/img/illustrations/no-avatar.svg';
+            }
 			$scope.username = result.result['0'].displayName;
 			model.me.profiles = result.result['0'].type;
 			$scope.$apply();
@@ -4882,7 +2707,16 @@ module.controller('Share', ['$rootScope','$scope', function($rootScope, $scope) 
 		$scope.found = [];
 		$scope.varyingRights = false;
 		feedData();
-	})
+	});
+
+	$scope.$watchCollection('resources', function(){
+		$scope.actions = [];
+		$scope.sharingModel.edited = [];
+		$scope.search = '';
+		$scope.found = [];
+		$scope.varyingRights = false;
+		feedData();
+	});
 
 	$scope.addEdit = function(item){
 		item.actions = {};
@@ -4963,10 +2797,10 @@ module.controller('Share', ['$rootScope','$scope', function($rootScope, $scope) 
 	function applyRights(element, action, cb){
 		var data;
 		if(element.login !== undefined){
-			data = { userId: element.id }
+			data = { userId: element.id, actions: [] }
 		}
 		else{
-			data = { groupId: element.id }
+            data = { groupId: element.id, actions: [] }
 		}
 		data.actions = actionToRights(element, action);
 
@@ -5067,7 +2901,9 @@ $(document).ready(function(){
 			function start(){
 				lang.addBundle('/i18n', function(){
 					lang.addBundle('/' + appPrefix + '/i18n', function(){
-						angular.bootstrap($('html'), ['app']);
+                        angular.bootstrap($('html'), ['app']);
+                        model.trigger('bootstrap');
+						model.bootstrapped = true;
 						model.sync();
 					});
 				});
@@ -5200,6 +3036,10 @@ module.controller('Widgets', ['$scope', 'model', 'lang', 'date', function($scope
 }]);
 
 module.controller('MediaLibrary', ['$scope', function($scope){
+	if(!model.me){
+		return;
+	}
+	
 	if(!model.mediaLibrary){
 		model.makeModels(workspace);
 		model.mediaLibrary = new Model();
@@ -5247,7 +3087,7 @@ module.controller('MediaLibrary', ['$scope', function($scope){
 	};
 
 	$scope.$watch('visibility', function(newVal){
-		if(model.me.workflow.workspace.create){
+		if(model.me && model.me.workflow.workspace.create){
 			if($scope.visibility === 'public'){
 				$scope.display.listFrom = 'publicDocuments';
 			}
@@ -5255,7 +3095,7 @@ module.controller('MediaLibrary', ['$scope', function($scope){
 				$scope.display.listFrom = 'appDocuments';
 			}
 		}
-		else if(model.me.workflow.workspace.list){
+		else if(model.me && model.me.workflow.workspace.list){
 			$scope.display.listFrom = 'sharedDocuments';
 		}
 
@@ -5379,7 +3219,6 @@ module.controller('MediaLibrary', ['$scope', function($scope){
 	};
 
 	$scope.importFiles = function(){
-		workspace.quality = $scope.upload.quality / 100;
 		var waitNumber = $scope.upload.files.length;
 		for(var i = 0; i < $scope.upload.files.length; i++){
 			$scope.upload.loading.push($scope.upload.files[i]);

@@ -1,18 +1,19 @@
-import { appPrefix, infraPrefix } from './globals';
 import { $ } from './libs/jquery/jquery';
-import { http, idiom as lang, model, ui, Behaviours, workspace, notify } from './entcore'
+import { Behaviours } from './behaviours';
+import { idiom as lang } from './idiom';
+import { workspace } from './workspace';
+import { ui } from './ui';
+import { model } from './modelDefinitions';
+import { http } from './http';
 import { _ } from './libs/underscore/underscore';
+import { appPrefix } from './globals';
+import { notify } from './notify';
+import { skin } from './skin';
 
-declare var Prism: any;
+declare let Prism: any;
 
-if (!String.prototype.startsWith) {
-    String.prototype.startsWith = function (str) {
-        if (this.indexOf(str) !== -1 && this.split(str)[0] === '') {
-            return true;
-        }
-        return false
-    };
-}
+var textNodes = ['SPAN', 'A', 'STRONG', 'EM', 'B', 'I', 'I18N'];
+var formatNodes = ['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
 
 function rgb(r, g, b) {
     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
@@ -20,7 +21,8 @@ function rgb(r, g, b) {
 var rgba = rgb;
 var transparent = 'rgba(255, 255, 255, 0)';
 
-export var RTE =  {
+export let RTE = {
+    baseToolbarConf: {} as any,
     Instance: function(data){
         var that = this;
         this.states = [];
@@ -48,7 +50,7 @@ export var RTE =  {
             this.trigger('contentupdated');
         };
 
-        var mousePosition = { top: 0, left: 0 };
+        var mousePosition = {} as any;
         this.editZone.on('mousemove', function(e){
             mousePosition = {
                 left: e.pageX,
@@ -177,6 +179,30 @@ export var RTE =  {
     Selection: function(data){
         var that = this;
         this.selectedElements = [];
+        this.nextRanges = [];
+
+        this.applyNextRanges = function(){
+            let selection = window.getSelection();
+            selection.removeAllRanges();
+            if(selection.rangeCount > 1){
+                this.nextRanges.forEach(function(range){
+                    selection.addRange(range);
+                });
+                that.instance.trigger('selectionchange', {
+                    selection: that.instance.selection
+                });
+
+                this.nextRanges = [];
+            }
+            else{
+                selection.addRange(this.nextRanges[0]);
+                that.instance.trigger('selectionchange', {
+                    selection: that.instance.selection
+                });
+
+                this.nextRanges = [];
+            }
+        };
 
         function getSelectedElements(){
             var selection = getSelection();
@@ -242,8 +268,12 @@ export var RTE =  {
             }
             var range = sel.getRangeAt(0);
 
-            var same = this.range && this.range.startContainer === range.startContainer && this.range.startOffset === range.startOffset
-                    && this.range.endContainer === range.endContainer && range.endOffset === this.range.endOffset;
+            var same = this.range && 
+            this.range.startContainer === range.startContainer && 
+            this.range.startOffset === range.startOffset && 
+            this.range.endContainer === range.endContainer && 
+            range.endOffset === this.range.endOffset &&
+            sel.rangeCount === this.rangeCount;
             same = same || (this.editZone.find(range.startContainer).length === 0 && this.editZone[0] !== range.startContainer);
             var selectedElements = getSelectedElements();
 
@@ -252,6 +282,7 @@ export var RTE =  {
             }
             if (!same && this.editZone.is(':focus')) {
                 this.range = range;
+                this.rangeCount = sel.rangeCount;
             }
             return !same;
         };
@@ -266,8 +297,9 @@ export var RTE =  {
             var range = document.createRange();
             range.setStart(element.firstChild || element, offset);
             this.range = range;
-
+            
             var sel = getSelection();
+            this.rangeCount = sel.rangeCount;
             this.selectedElements = [];
             sel.removeAllRanges();
             sel.addRange(range);
@@ -299,164 +331,332 @@ export var RTE =  {
 
             sel.removeAllRanges();
             sel.addRange(range);
+            this.rangeCount = 1;
         };
 
         this.wrap = function(element){
             that.instance.addState(that.editZone.html());
-            if(this.range.startContainer === this.range.endContainer){
-                element.html('&nbsp;');
-                var elementAtCaret = this.range.startContainer;
-                if (elementAtCaret.nodeType === 1 && elementAtCaret.getAttribute('contenteditable') || elementAtCaret.nodeName === 'TD') {
-                    var newEl = document.createElement('div');
-                    elementAtCaret.appendChild(newEl);
-                    elementAtCaret = newEl;
-                }
-                if (elementAtCaret.nodeType === 3) {
-                    element.text(elementAtCaret.textContent);
-                    if(elementAtCaret.parentNode.nodeName === 'TD'){
-                        var wrapper = $('<div></div>');
-                        $(elementAtCaret.parentNode).append(wrapper);
-                        wrapper.append(element);
-                        elementAtCaret.remove();
-                    }
-                    else{
-                        elementAtCaret.parentNode.parentNode.insertBefore(element[0], elementAtCaret.parentNode);
-                        elementAtCaret.parentNode.remove();
-                    }
-                }
-                else {
-                    element.text('');
-                    // range is annoyingly changed while executing code
-                    var end = this.range.endOffset;
-                    var start = this.range.startOffset;
-                    for(var i = start; i < end; i++){
-                        element[0].textContent += elementAtCaret.childNodes[i].textContent;
-                        if(i === end - 1){
-                            elementAtCaret.insertBefore(element[0], elementAtCaret.childNodes[i]);
-                            elementAtCaret.childNodes[i + 1].remove();
+            var commonAncestor = that.range.commonAncestorContainer;
+            var startOffset = that.range.startOffset;
+            var endOffset = that.range.endOffset;
+            
+            var elementAtCaret = commonAncestor;
+            if (
+                elementAtCaret.nodeType === 1
+                && (elementAtCaret.getAttribute('contenteditable') || elementAtCaret.nodeName === 'TD')
+            ) {
+                var wrapper = $('<div>&#8203;</div>');
+                $(elementAtCaret).append(wrapper);
+                elementAtCaret = wrapper[0];
+            }
+            if (elementAtCaret.parentNode.nodeName === 'TD') {
+                var wrapper = $('<div>&#8203;</div>');
+                $(elementAtCaret.parentNode).append(wrapper);
+                wrapper.append(elementAtCaret);
+            }
+
+            if(
+                this.isCursor() || commonAncestor.nodeType === 3 || textNodes.indexOf(commonAncestor.nodeName) !== -1
+            ){
+                element.html('&#8203;');
+
+                while (textNodes.indexOf(elementAtCaret.nodeName) !== -1 || elementAtCaret.nodeType === 3) {
+                    if (elementAtCaret.parentNode.nodeType === 1 && elementAtCaret.parentNode.getAttribute('contenteditable') || elementAtCaret.parentNode.nodeName === 'TD') {
+                        var newEl = document.createElement('div');
+                        if(elementAtCaret.nodeType === 1){
+                            $(newEl).html($(elementAtCaret).html());
                         }
                         else{
-                            elementAtCaret.childNodes[i].remove();
+                            $(newEl).text(elementAtCaret.textContent);
+                        }
+                        
+                        elementAtCaret.parentNode.insertBefore(newEl, elementAtCaret);
+                        elementAtCaret.remove();
+                        elementAtCaret = newEl;
+                    }
+                    else{
+                        elementAtCaret = elementAtCaret.parentNode;
+                    }
+                }
+
+                element.html($(elementAtCaret).html());
+                elementAtCaret.parentNode.insertBefore(element[0], elementAtCaret);
+                elementAtCaret.parentNode.removeChild(elementAtCaret);
+
+                var sel = window.getSelection();
+                var r = document.createRange();
+                r.setStart(element[0].firstChild, startOffset);
+                r.setEnd(element[0].firstChild, endOffset);
+                sel.removeAllRanges();
+                sel.addRange(r);
+            }
+            else {
+                if (formatNodes.indexOf(elementAtCaret.nodeName) !== -1) {
+                    element.html($(elementAtCaret).html());
+                    elementAtCaret.parentNode.insertBefore(element[0], elementAtCaret);
+                    elementAtCaret.remove();
+                    var sel = window.getSelection();
+                    var r = document.createRange();
+                    r.setStart(element[0], 0);
+                    var endOffset = element[0].textContent.length;
+                    if(element[0].childNodes.length){
+                        endOffset = element[0].childNodes.length;
+                    }
+                    r.setEnd(element[0], endOffset);
+                    sel.removeAllRanges();
+                    sel.addRange(r);
+                }
+                else {
+                    var foundFirst = false;
+                    var foundLast = false;
+                    for (var i = 0; i < elementAtCaret.childNodes.length; i++) {
+                        var item = elementAtCaret.childNodes[i];
+                        if (item === this.range.startContainer ||
+                            (this.range.startContainer.nodeType === 1 && $(this.range.startContainer).find(item).length) ||
+                            (item.nodeType === 1 && $(item).find(this.range.startContainer).length)) {
+                            foundFirst = true;
+                        }
+                        if (item === this.range.endContainer ||
+                            (this.range.endContainer.nodeType === 1 && $(this.range.endContainer).find(item).length) ||
+                            (item.nodeType === 1 && $(item).find(this.range.endContainer).length)) {
+                            foundLast = true;
+                            if (this.range.endOffset === 0) {
+                                break;
+                            }
+                        }
+                        if (!foundFirst) {
+                            continue;
+                        }
+                        var el = $(element[0].outerHTML);
+                        while (textNodes.indexOf(item.nodeName) !== -1 || item.nodeType === 3) {
+                            item = item.parentNode;
+                        }
+                        if(!item.parentNode){
+                            continue;
+                        }
+
+                        el.html(item.innerHTML || item.textContent);
+                        item.parentNode.insertBefore(el[0], item);
+                        item.remove();
+                        var sel = window.getSelection();
+                        var r = document.createRange();
+                        r.setStart(el[0], 0);
+                        var endOffset = el[0].textContent.length;
+                        if(el[0].childNodes.length){
+                            endOffset = el[0].childNodes.length;
+                        }
+                        r.setEnd(el[0], endOffset);
+                        sel.removeAllRanges();
+                        sel.addRange(r);
+                        if (foundLast) {
+                            break;
                         }
                     }
                 }
-                this.moveCaret(element[0], element.text().length);
-            }
-            else{
-                this.selectedElements.forEach(function (item) {
-                    if (!item) {
-                        return;
-                    }
-
-                    var el = $(element[0].outerHTML);
-                    
-                    if(!item.parentNode){
-                        return;
-                    }
-                    if (item.nodeType !== 1 && item.parentNode.nodeName !== 'DIV') {
-                        var div = document.createElement('div');
-                        $(div).html(item.textContent);
-                        item.parentNode.insertBefore(div, item);
-                        item.remove();
-                        item = div;
-                        
-                        if (item.nodeName === 'A') {
-                            item = item.parentNode;
-                        }
-                    }
-                    el.html(item.innerHTML || item.textContent);
-                    item.parentNode.replaceChild(el[0], item);
-                    that.selectNode(el[0]);
-                });
             }
             that.instance.addState(that.editZone.html());
             setTimeout(function () {
-                this.instance.trigger('contentupdated');
-            }.bind(this), 20);
+                this.instance.trigger('selectionchange', { selection: this.instance.selection });
+                this.instance.trigger('change');
+            }.bind(this), 100);
         };
 
         this.isCursor = function () {
-            return this.range.startContainer === this.range.endContainer && this.range.startOffset === this.range.endOffset;
+            let sel = window.getSelection();
+            if(sel.rangeCount > 0 && this.instance.editZone.find(sel.getRangeAt(0).startContainer).length > 0){
+                this.rangeCount = sel.rangeCount;
+                this.range = sel.getRangeAt(0);
+            }
+
+            return (this.rangeCount === 1 || this.rangeCount === 0) && 
+            this.range.startContainer === this.range.endContainer && 
+            this.range.startOffset === this.range.endOffset;
         }
+
+        let wrapTextOnNode = function(el, node, last){
+            if(!node){
+                node = this.range.commonAncestorContainer;
+            }
+            if(node.nodeType === 3){
+                let start = 0;
+                if(node === this.range.startContainer){
+                    start = this.range.startOffset;
+                }
+                let textNode = document.createTextNode(node.textContent.substring(start));
+                if(node === this.range.endContainer){
+                    textNode = document.createTextNode(node.textContent.substring(start, this.range.endOffset));
+                    let nextText = document.createTextNode(node.textContent.substring(this.range.endOffset));
+                    node.parentNode.insertBefore(nextText, node.nextSibling);
+                }
+                el.append(textNode);
+                
+                node.textContent = node.textContent.substring(0, start);
+            }
+
+            let foundFirst = false;
+            if(last){
+                foundFirst = true;
+            }
+            let nodes = [];
+            for(let i = 0; i < node.childNodes.length; i++){
+                let child = node.childNodes[i];
+                nodes.push(child);
+            }
+
+            for(let i = 0; i < nodes.length; i++){
+                let child = nodes[i];
+                
+                if(child === this.range.startContainer){
+                    foundFirst = true;
+                    if(this.range.startOffset === 0){
+                        el.append(child);
+                    }
+                    if(child.nodeType === 1){
+                        let last = child.childNodes.length;
+                        if(this.range.startContainer === this.range.endContainer){
+                            last = this.range.endOffset;
+                        }
+
+                        for(let i = this.range.startOffset; i < last; i++){
+                            el.append(child.childNodes[i]);
+                        }
+                    }
+                    else{
+                        let textNode;
+                        if(this.range.startContainer === this.range.endContainer){
+                            textNode = document.createTextNode(child.textContent.substring(this.range.startOffset, this.range.endOffset));
+                            
+                            let nextText = document.createTextNode(child.textContent.substring(this.range.endOffset));
+                            child.parentNode.insertBefore(nextText, child.nextSibling);
+                            child.textContent = child.textContent.substring(0, this.range.startOffset);
+                        }
+                        else{
+                            textNode = document.createTextNode(child.textContent.substring(this.range.startOffset));
+                            child.textContent = child.textContent.substring(0, this.range.startOffset);
+                        }
+                        el.append(textNode);
+                    }
+                    
+                    continue;
+                }
+
+                if(child.contains(this.range.startContainer)){
+                    let container = document.createElement(child.nodeName);
+                    $(container).attr('style', $(child).attr('style'));
+                    el.append(container);
+                    wrapTextOnNode(container, child);
+                    foundFirst = true;
+                    continue;
+                }
+
+                if(!foundFirst){
+                    continue;
+                }
+
+                if(child === this.range.endContainer){
+                    if(child.nodeType === 1){
+                        let last = this.range.endOffset;
+                        for(let i = this.range.startOffset; i < last; i++){
+                            el.append(child.childNodes[i]);
+                        }
+                    }
+                    else{
+                        let textNode = document.createTextNode(child.textContent.substring(0, this.range.endOffset));
+                        child.textContent = child.textContent.substring(this.range.endOffset);
+
+                        el.append(textNode);
+                    }
+
+                    break;
+                }
+
+                if(child.contains(this.range.endContainer)){
+                    let container = document.createElement(child.nodeName);
+                    $(container).attr('style', $(child).attr('style'));
+                    el.append(container);
+                    wrapTextOnNode(container, child, true);
+                    break;
+                }
+
+                el.append(child);
+            }
+        }.bind(this);
 
         this.wrapText = function(el){
             this.instance.addState(this.editZone.html());
-            if(!this.selectedElements.length){
+            if(this.isCursor()){
                 el.html('<br />');
                 this.editZone.append(el);
                 this.selectNode(el[0]);
             }
-            else{
-                var addedNodes = [];
-                this.selectedElements.forEach(function (item, index) {
-                    if (!item) {
-                        return;
+            else if(
+                this.range.startContainer === this.range.commonAncestorContainer && 
+                this.range.startContainer === this.range.endContainer &&
+                this.range.startContainer.nodeType === 1
+            ){
+                let container = this.range.startContainer;
+                if(this.instance.editZone[0] === this.range.startContainer){
+                    let newEl = document.createElement('div');
+                    
+                    while (this.instance.editZone[0].childNodes.length) {
+                        $(newEl).append(this.instance.editZone[0].childNodes[0]);
                     }
-
-                    var node = $(el[0].outerHTML);
-                    if(item.nodeType === 1){
-                        $(item).wrapInner(node);
-                    }
-                    else{
-                        if(that.range.startContainer === item && that.range.startOffset >= 0 && that.range.startContainer !== that.range.endContainer){
-                            node.html(item.textContent.substring(that.range.startOffset));
-                            item.parentNode.insertBefore(node[0], item.nextSibling);
-                            item.textContent = item.textContent.substring(0, that.range.startOffset);
-                        }
-                        else if (that.range.endContainer === item && that.range.endOffset <= item.textContent.length && that.range.startContainer !== that.range.endContainer) {
-                            node.text(item.textContent.substring(0, that.range.endOffset));
-                            item.parentNode.insertBefore(node[0], item);
-                            item.textContent = item.textContent.substring(that.range.endOffset);
-                        }
-                        else if (that.range.startContainer === that.range.endContainer && that.range.startContainer === item) {
-                            node.html(item.textContent.substring(that.range.startOffset, that.range.endOffset));
-                            var textBefore = document.createTextNode('');
-                            textBefore.textContent = item.textContent.substring(0, that.range.startOffset);
-                            item.parentNode.insertBefore(node[0], item);
-                            item.parentNode.insertBefore(textBefore, node[0]);
-                            item.textContent = item.textContent.substring(that.range.endOffset);
-                        }
-                        else {
-                            node.html(item.textContent);
-                            item.parentNode.insertBefore(node[0], item);
-                            item.textContent = "";
-                        }
-                        addedNodes.push(node[0]);
-                    }
-                });
-                addedNodes.forEach(that.selectNode);
+                    this.instance.editZone.append(newEl);
+                    container = newEl;
+                }
+                while(container.childNodes.length === 1){
+                    container = container.firstChild;
+                }
+                container.parentNode.insertBefore(el[0], container);
+                el.append(container);
+                
             }
-
-            that.instance.trigger('contentupdated');
+            else{
+                wrapTextOnNode(el);
+                this.range.startContainer.parentNode.insertBefore(el[0], this.range.startContainer.nextSibling);
+            }
+                
+            
+            this.instance.trigger('change');
+            this.selectNode(el[0]);
         };
 
-
-        function applyCSSCursor(css) {
-            var el = $('<span>&nbsp;</span>');
-            if (!that.range && !that.editZone.html()) {
-                var elementAtCaret = $('<div></div>').appendTo(that.editZone);
+        function applyCSSCursor(css){
+            var elementAtCaret;
+            var el = $('<span>&#8203;</span>');
+            if (!that.range && !that.editZone.html() || that.range.startContainer === that.editZone[0]) {
+                if(that.editZone.children('div').length > 0){
+                    elementAtCaret = that.editZone.children('div')[0].firstChild;
+                }
+                else{
+                    elementAtCaret = $('<div>&#8203;</div>').appendTo(that.editZone)[0].firstChild;
+                }
             }
             else {
-                var elementAtCaret = that.range.startContainer;
-                if (elementAtCaret.nodeType !== 1) {
-                    elementAtCaret = elementAtCaret.parentNode;
-                }
-                if (elementAtCaret.nodeName === 'SPAN') {
+                elementAtCaret = that.range.startContainer;
+                if (elementAtCaret.nodeType === 1 && elementAtCaret.nodeName === 'SPAN') {
                     el.attr('style', $(elementAtCaret).attr('style'));
-                    elementAtCaret = elementAtCaret.parentNode;
-                }
-                if (that.editZone.find(elementAtCaret).length === 0) {
-                    elementAtCaret = that.editZone[0];
                 }
             }
-
+            
             el.css(css);
-            $(elementAtCaret).append(el);
+            var nodeBefore = $('<span>' + elementAtCaret.textContent.substring(0, that.range.startOffset) + '</span>');
+            var nodeAfter = $('<span>' + elementAtCaret.textContent.substring(that.range.startOffset) + '</span>');
+            if (nodeAfter.text().length) {
+                elementAtCaret.parentNode.insertBefore(nodeAfter[0], elementAtCaret);
+                elementAtCaret.parentNode.insertBefore(el[0], nodeAfter[0]);
+                elementAtCaret.parentNode.insertBefore(nodeBefore[0], el[0]);
+                elementAtCaret.remove();
+            }
+            else {
+                elementAtCaret.parentNode.insertBefore(el[0], elementAtCaret.nextSibling);
+            }
+            
             that.moveCaret(el[0], 1);
         }
 
-        function applyCSSNode(css) {
-            var element = that.range.startContainer;
+        function applyCSSNode(css, range){
+            var element = range.startContainer;
             if (element.nodeType !== 1 && element.parentNode.nodeName !== 'SPAN') {
                 var el = document.createElement('span');
                 el.textContent = element.textContent;
@@ -468,190 +668,250 @@ export var RTE =  {
                 element = element.parentNode;
             }
             $(element).css(css);
+            $(element).find('*').css(css);
             that.selectNode(element);
         }
 
-        function applyCSSUntil(nodeLimit, endOffset, css) {
-            var addedNodes = [];
-            var sibling = nodeLimit.parentNode.firstChild;
-            do {
-                if (sibling.nodeType === 1) {
-                    $(sibling).css(css);
-                }
-                else {
-                    var el = $('<span></span>')
-                        .css(css);
-                    if (sibling === nodeLimit) {
-                        el.text(sibling.textContent.substring(0, that.range.endOffset));
-                        sibling.parentNode.insertBefore(el[0], sibling);
-                        sibling.textContent = sibling.textContent.substring(that.range.endOffset);
-                    }
-                    else {
-                        el.text(sibling.textContent.substring(0, sibling.textContent.length));
-                        sibling.parentNode.insertBefore(el[0], sibling);
-                        sibling.textContent = sibling.textContent.substring(sibling.textContent.length);
-                    }
-                    addedNodes.push(el[0]);
-                }
-                sibling = sibling.nextSibling;
-            } while (sibling !== nodeLimit && sibling);
-
-            return addedNodes;
-        }
-
-        function applyCSSFrom(nodeStart, startOffset, css) {
-            var addedNodes = [];
+        function applyCSSBetween(range, nodeStart, nodeEnd, css, keepRangeStart?, startOffset?) {
+            let startSet = false;
+            if (startOffset === undefined) {
+                startOffset = range.startOffset;
+            }
             var sibling = nodeStart;
+            var i = startOffset;
             do {
                 if (sibling.nodeType === 1) {
+                    let r;
+                    if(!keepRangeStart && !startSet){
+                        r = document.createRange();
+                        r.setStart(sibling, 0);
+                        that.nextRanges.push(r);
+                        startSet = true;
+                    }
+                    else{
+                        r = that.nextRanges[that.nextRanges.length - 1];
+                    }
+                    r.setEnd(sibling, 1);
                     $(sibling).css(css);
                 }
                 else {
                     var el = $('<span></span>')
                         .css(css);
-                    if (sibling === nodeStart) {
-                        el.html(sibling.textContent.substring(startOffset));
-                        sibling.parentNode.insertBefore(el[0], sibling.nextSibling);
-                        sibling.textContent = sibling.textContent.substring(0, startOffset);
+                    if (sibling === nodeStart && sibling === nodeEnd) {
+                        el.html(sibling.textContent.substring(startOffset, range.endOffset));
+                        if (el.html().length > 0) {
+                            sibling.parentNode.insertBefore(el[0], sibling);
+                            let afterText = document.createTextNode(sibling.textContent.substring(range.endOffset));
+                            sibling.parentNode.insertBefore(afterText, el[0].nextSibling);
+                            sibling.textContent = sibling.textContent.substring(0, startOffset);
+                            that.moveRanges(range, sibling, -(el.text().length), afterText);
+                            var r = document.createRange();
+                            if (keepRangeStart || startSet) {
+                                r = that.nextRanges[that.nextRanges.length - 1];
+                                r.setEnd(el[0], 1);
+                            }
+                            else {
+                                startSet = true;
+                                r.setStart(el[0], 0);
+                                r.setEnd(el[0], 1);
+                                that.nextRanges.push(r);
+                            }
+                        }
+                    }
+                    else if (
+                        sibling === nodeEnd
+                        || (sibling.parentNode === range.endContainer && sibling === range.endContainer.childNodes[range.endOffset])
+                    ) {
+                        el.text(sibling.textContent.substring(0, range.endOffset));
+                        if (el.text()) {
+                            sibling.parentNode.insertBefore(el[0], sibling);
+                            sibling.textContent = sibling.textContent.substring(range.endOffset);
+                            that.moveRanges(range, sibling, -(el.text().length + range.startOffset));
+                            let r = that.nextRanges[that.nextRanges.length - 1];
+                            r.setEnd(el[0], 1);
+                        }
+                    }
+                    else if (sibling === nodeStart) {
+                        el.text(sibling.textContent.substring(startOffset, sibling.textContent.length));
+                        if(el.text()){
+                            sibling.parentNode.insertBefore(el[0], sibling.nextSibling);
+                            sibling.textContent = sibling.textContent.substring(0, startOffset);
+                            if (!keepRangeStart && !startSet) {
+                                let r = document.createRange();
+                                r.setStart(el[0], 0);
+                                r.setEnd(el[0], 1);
+                                that.nextRanges.push(r);
+                                startSet = true;
+                            }
+                            else{
+                                let r = that.nextRanges[that.nextRanges.length - 1];
+                                r.setEnd(el[0], 1);
+                            }
+                        }
                     }
                     else {
                         el.text(sibling.textContent.substring(0, sibling.textContent.length));
-                        sibling.parentNode.insertBefore(el[0], sibling);
-                        sibling.textContent = sibling.textContent.substring(sibling.textContent.length);
+                        if (el.text()) {
+                            sibling.parentNode.insertBefore(el[0], sibling);
+                            sibling.textContent = sibling.textContent.substring(sibling.textContent.length);
+                            that.moveRanges(range, sibling, -el.text().length);
+                        }
+                        
                     }
-                    addedNodes.push(el[0]);
                 }
-                sibling = sibling.nextSibling;
-            } while (sibling);
-
-            return addedNodes;
+                if(sibling !== nodeEnd){
+                    sibling = sibling.nextSibling;
+                }
+                
+                i++;
+            } while (
+                sibling && sibling !== nodeEnd
+                && !(sibling.parentNode === range.endContainer && sibling === range.endContainer.childNodes[range.endOffset])
+                && !$(sibling).find(range.endContainer).length
+            );
         }
 
-        function applyCSSText(css) {
+        function applyCSSText(css, range){
             var el = $(document.createElement('span'));
             $(el).css(css);
 
-            el.html(that.range.startContainer.textContent.substring(that.range.startOffset, that.range.endOffset));
+            el.html(range.startContainer.textContent.substring(range.startOffset, range.endOffset));
             var textBefore = document.createTextNode('');
-            textBefore.textContent = that.range.startContainer.textContent.substring(0, that.range.startOffset);
-            that.range.startContainer.parentNode.insertBefore(el[0], that.range.startContainer);
-            that.range.startContainer.parentNode.insertBefore(textBefore, el[0]);
-            that.range.startContainer.textContent = that.range.startContainer.textContent.substring(that.range.endOffset);
+            textBefore.textContent = range.startContainer.textContent.substring(0, range.startOffset);
+            range.startContainer.parentNode.insertBefore(el[0], range.startContainer);
+            range.startContainer.parentNode.insertBefore(textBefore, el[0]);
+            range.startContainer.textContent = range.startContainer.textContent.substring(range.endOffset);
 
-            return [el[0]];
+            that.moveRanges(range, range.startContainer, -(el.text().length + range.startOffset));
+
+            var r = document.createRange();
+            r.setStart(el[0], 0);
+            r.setEnd(el[0], 1);
+            that.nextRanges.push(r);
         }
 
-        function applyCSS(css) {
+        function applyCSS(css, range) {
             that.instance.addState(that.editZone.html());
 
-            if (that.isCursor()) {
+            if(that.isCursor()){
                 applyCSSCursor(css);
+                return;
             }
-            else if (that.range.startContainer === that.range.endContainer &&
+            
+            if (range.startContainer === range.endContainer &&
                 (
-                    that.range.startContainer.nodeType === 3 &&
-                    that.range.startOffset === 0 &&
-                    that.range.endOffset === that.range.startContainer.textContent.length
+                    range.startContainer.nodeType === 3 &&
+                    range.startOffset === 0 &&
+                    range.endOffset === range.startContainer.textContent.length
                 )
             ) {
-                applyCSSNode(css)
+                applyCSSNode(css, range)
             }
-            else if (that.range.startContainer === that.range.endContainer &&
+            else if(range.startContainer === range.endContainer && 
                 (
-                    that.range.startContainer.nodeType === 1 &&
-                    that.range.startOffset === 0 &&
-                    that.range.endOffset === that.range.startContainer.childNodes.length
+                    range.startContainer.nodeType === 1 &&
+                    range.startOffset === 0 &&
+                    range.endOffset === range.startContainer.childNodes.length
                 )
-            ) {
-                if (that.range.startContainer !== that.editZone[0]) {
-                    $(that.range.startContainer).css(css);
+            ){
+                if(range.startContainer !== that.editZone[0]){
+                    $(range.startContainer).css(css);
+                    $(range.startContainer).find('span').css(css);
                 }
-                else {
-                    $(that.range.startContainer).find('*').css(css);
+                else{
+                    $(range.startContainer).find('*').css(css);
                 }
             }
-            else {
-                var addedNodes = [];
-
-                if (that.range.commonAncestorContainer.nodeType === 3) {
-                    addedNodes = addedNodes.concat(applyCSSText(css));
+            else{
+                if(range.commonAncestorContainer.nodeType === 3){
+                    applyCSSText(css, range);
                 }
-                else {
+                else{
                     var foundFirst = false;
-                    for (var i = 0; i < that.range.commonAncestorContainer.childNodes.length; i++) {
-                        var sibling = that.range.commonAncestorContainer.childNodes[i];
-                        if (
-                            sibling === that.range.startContainer ||
-                            sibling.contains(that.range.startContainer) ||
-                            that.range.startContainer.contains(sibling)
-                        ) {
+                    for(var i = 0; i < range.commonAncestorContainer.childNodes.length; i++){
+                        var sibling = range.commonAncestorContainer.childNodes[i];
+                        if(
+                            sibling === range.startContainer || 
+                            (sibling.nodeType === 1 && $(sibling).find(range.startContainer).length) || 
+                            (range.startContainer.nodeType === 1 && $(range.startContainer).find(sibling).length && range.startOffset === i)
+                        ){
                             foundFirst = true;
                         }
-                        if (!foundFirst) {
+                        if(!foundFirst){
                             continue;
                         }
 
-                        if (sibling.contains(that.range.startContainer)) {
-                            addedNodes = addedNodes.concat(
-                                applyCSSFrom(that.range.startContainer, that.range.startOffset, css)
-                            );
-                            continue;
-                        }
-
-                        if (that.range.startContainer.contains(sibling) || sibling === that.range.startContainer) {
-                            addedNodes = addedNodes.concat(
-                                applyCSSFrom(that.range.startContainer, that.range.startOffset, css)
-                            );
-                            continue;
-                        }
-
-                        if (sibling.contains(that.range.endContainer)) {
-                            addedNodes = addedNodes.concat(
-                                applyCSSUntil(that.range.endContainer, that.range.endOffset, css)
-                            );
+                        if(
+                            (sibling === range.endContainer && range.endOffset === 0) ||
+                            ($(range.endContainer).find(sibling).length && range.endOffset === i)
+                        ){
                             break;
                         }
 
-                        if (that.range.endContainer.contains(sibling) || sibling === that.range.endContainer) {
-                            addedNodes = addedNodes.concat(
-                                applyCSSUntil(that.range.startContainer, that.range.startOffset, css)
-                            );
+                        if (
+                            sibling.nodeType === 1 && $(sibling).find(range.startContainer).length
+                        ) {
+                            applyCSSBetween(range, range.startContainer, range.endContainer, css);
+                            continue;
+                        }
+
+                        if (
+                            (
+                                range.startContainer.nodeType === 1
+                                && $(range.startContainer).find(sibling).length
+                                && range.startOffset === i
+                            )
+                            || sibling === range.startContainer
+                        ) {
+                            applyCSSBetween(range, sibling, range.endContainer, css);
+                            continue;
+                        }
+
+                        if (
+                            sibling.nodeType === 1 
+                            && $(sibling).find(range.endContainer).length
+                        ) {
+                            var firstChild = sibling.firstChild;
+                            var startOffset = 0;
+                            if ($(sibling).find(range.startContainer).length) {
+                                firstChild = range.startContainer;
+                                startOffset = range.startOffset;
+                            }
+                            applyCSSBetween(range, firstChild, range.endContainer, css, true, startOffset);
                             break;
                         }
 
-                        if (sibling.nodeType === 1) {
-                            addedNodes.push(sibling);
+                        if (
+                                sibling === range.endContainer
+                            )
+                        {
+                            var firstChild = range.endContainer.firstChild;
+                            if (!firstChild) {
+                                firstChild = range.endContainer;
+                            }
+                            applyCSSBetween(range, firstChild, range.endContainer, css, true, 0);
+                            break;
+                        }
+
+                        if(sibling.nodeType === 1){
                             $(sibling).css(css);
                             $(sibling).find('*').css(css);
                             continue;
                         }
-                        else {
+                        else{
                             var el = $(document.createElement('span'));
                             el.css(css);
-                            addedNodes.push(el[0]);
+                            el.text(sibling.textContent);
+                            sibling.parentNode.insertBefore(el[0], sibling);
+                            sibling.remove();
                         }
 
-                        if (sibling === that.range.endContainer) {
+                        if(sibling === range.endContainer){
                             break;
                         }
                     }
                 }
-
-                var sel = window.getSelection();
-                var range = document.createRange();
-
-                range.setStartBefore(addedNodes[0]);
-                range.setEndAfter(addedNodes[addedNodes.length - 1]);
-
-                sel.removeAllRanges();
-                sel.addRange(range);
-                that.instance.trigger('selectionchange', {
-                    selection: that.instance.selection
-                });
             }
-
-            that.instance.addState(that.editZone.html());
-            that.instance.trigger('contentupdated');
         }
 
         this.isEmpty = function () {
@@ -669,9 +929,135 @@ export var RTE =  {
             return $(element);
         }
 
+        this.moveRanges = function(mover, container, offset, newContainer){
+            let selection = window.getSelection();
+            this.ranges.forEach(function(range){
+                if(range === mover){
+                    return;
+                }
+                if(range.startContainer === container){
+                    range.startOffset += offset;
+                    if(newContainer){
+                        range.startContainer = newContainer;
+                    }
+                }
+                if(range.endContainer === container){
+                    range.endOffset += offset;
+                    if(newContainer){
+                        range.endContainer = newContainer;
+                    }
+                }
+            });
+        };
+
         this.css = function(params){
             if(typeof params === 'object'){
-                applyCSS(params);
+                let selection = window.getSelection();
+                if(!this.instance.editZone.html()){
+                    this.instance.editZone.html('<div>&#8203;</div>');
+                }
+                if(!this.instance.editZone.is(':focus')){
+                    this.instance.editZone[0].focus();
+                    let range = selection.getRangeAt(0);
+                    this.range = range;
+                    this.rangeCount = 1;
+                }
+                this.ranges = [];
+                for(let i = 0; i < selection.rangeCount; i++){
+                    let range = selection.getRangeAt(i);
+                    this.ranges.push({
+                        startContainer: range.startContainer,
+                        endContainer: range.endContainer,
+                        startOffset: range.startOffset,
+                        endOffset: range.endOffset,
+                        commonAncestorContainer: range.commonAncestorContainer
+                    });
+                    
+                }
+                this.ranges.forEach(function(range){
+                    applyCSS(params, range);
+                });
+                if(this.nextRanges.length){
+                    this.applyNextRanges();
+                }
+                
+                //cleanup
+                that.editZone.find('span').each(function(index, item){
+                    if(item.childNodes.length > 1){
+                        let child = item.firstChild;
+                        while(child !== null){
+                            let nextChild = child.nextSibling;
+                            if(child.nodeType === 3 && child.textContent === ""){
+                                child.remove();
+                            }
+                            child = nextChild;
+                        }
+                    }
+                    if(item.childNodes.length === 1 && item.childNodes[0].nodeType === 1 && item.childNodes[0].nodeName === 'SPAN'){
+                        for(let i = 0; i < item.childNodes[0].style.length; i++){
+                            let prop = item.childNodes[0].style[i];
+                            $(item).css(prop, $(item.childNodes[0]).css(prop));
+                        }
+                        let sel = window.getSelection();
+                        let newRanges = [];
+                        for(let i = 0; i < sel.rangeCount; i++){
+                            let range = {
+                                startContainer: sel.getRangeAt(i).startContainer,
+                                endContainer: sel.getRangeAt(i).endContainer,
+                                startOffset: sel.getRangeAt(i).startOffset,
+                                endOffset: sel.getRangeAt(i).endOffset
+                            };
+
+                            if(range.startContainer === item.childNodes[0]){
+                                if(range.startContainer.nodeType === 1 && item.nodeType === 3 && range.startOffset === 1){
+                                    range.startOffset = item.textContent.length;
+                                }
+                                range.startContainer = item;
+                            }
+                            if(range.endContainer === item.childNodes[0]){
+                                if(range.endContainer.nodeType === 1 && item.nodeType === 3 && range.endOffset === 1){
+                                    range.endOffset = item.textContent.length;
+                                }
+                                range.endContainer = item;
+                            }
+                            newRanges.push(range);
+                        }
+
+                        while(item.childNodes[0].childNodes.length){
+                            $(item).append(item.childNodes[0].childNodes[0]);
+                        }
+                        item.childNodes[0].remove();
+
+                        sel.removeAllRanges();
+                        newRanges.forEach(function(rangeDef){
+                            let range = document.createRange();
+                            range.setStart(rangeDef.startContainer, rangeDef.startOffset);
+                            range.setEnd(rangeDef.endContainer, rangeDef.endOffset);
+                            sel.addRange(range);
+                        });
+                    }
+                    if(item.nextSibling && item.nextSibling.nodeType === 1 && item.nextSibling.nodeName === 'SPAN'){
+                        let sameStyle = true;
+                        for(let i = 0; i < item.nextSibling.style.length; i++){
+                            sameStyle = sameStyle && $(item).css(item.nextSibling.style[i]) === $(item.nextSibling).css(item.nextSibling.style[i]);
+                        }
+                        for(let i = 0; i < item.style.length; i++){
+                            sameStyle = sameStyle && $(item.nextSibling).css(item.style[i]) === $(item).css(item.style[i]);
+                        }
+                        if(sameStyle){
+                            while(item.childNodes.length){
+                                $(item.nextSibling).prepend(item.childNodes[item.childNodes.length - 1]);
+                            }
+                            item.remove();
+                        }
+                    }
+                    if($(item).html() === ""){
+                        $(item).remove();
+                    }
+                });
+
+                that.instance.addState(that.editZone.html());
+                that.instance.trigger('contentupdated');
             }
             else {
                 if (!this.selectedElements.length) {
@@ -689,7 +1075,7 @@ export var RTE =  {
                 var different = false;
                 var val = undefined;
                 this.selectedElements.forEach(function (item) {
-                    if (!item) {
+                    if(!item){
                         return;
                     }
                     var itemVal;
@@ -715,7 +1101,7 @@ export var RTE =  {
         this.replaceHTML = function(htmlContent){
             that.instance.addState(that.editZone.html());
             var wrapper = $('<div></div>');
-            wrapper.html(htmlContent);
+            wrapper.html(htmlContent + '&#8203;');
             if (this.range) {
                 this.range.deleteContents();
                 this.range.insertNode(wrapper[0]);
@@ -724,16 +1110,35 @@ export var RTE =  {
                 this.editZone.append(wrapper);
             }
 
-            this.instance.trigger('contentupdated');
+            that.instance.trigger('change');
+        };
+
+        this.replaceHTMLInline = function (htmlContent) {
+            that.instance.addState(that.editZone.html());
+            var wrapper = $('<span></span>');
+            wrapper.html(htmlContent);
+            if (this.range) {
+                this.range.deleteContents();
+                this.range.insertNode(wrapper[0]);
+            }
+            else {
+                this.editZone.append(wrapper);
+                var sel = window.getSelection();
+                var range = document.createRange();
+                range.setStart(wrapper[0], wrapper[0].childNodes.length);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+
+            that.instance.trigger('change');
         };
 
         this.$ = function(){
             var jSelector = $();
-            this.selectedElements.forEach(function (item) {
-                if (!item) {
+            this.selectedElements.forEach(function(item){
+                if(!item){
                     return;
                 }
-
                 if(item.nodeType === 1){
                     jSelector = jSelector.add(item);
                 }
@@ -754,8 +1159,16 @@ export var RTE =  {
             var optionScope = instance.scope.$new();
 
             var optionResult = option.run(instance);
-            optionElement.html(instance.compile(optionResult.template)(optionScope));
-            optionResult.link(optionScope, optionElement, instance.attributes);
+            if (optionResult.template) {
+                optionElement.html(instance.compile(optionResult.template)(optionScope));
+                optionResult.link(optionScope, optionElement, instance.attributes);
+            }
+            if (optionResult.templateUrl) {
+                http().get(optionResult.templateUrl).done(function (content) {
+                    optionElement.html(instance.compile(content)(optionScope));
+                    optionResult.link(optionScope, optionElement, instance.attributes);
+                }.bind(this));
+            }
         });
     },
     ToolbarConfiguration: function(){
@@ -770,7 +1183,6 @@ export var RTE =  {
     Option: function(){
 
     },
-    baseToolbarConf: null,
     setModel: function(){
         model.makeModels(RTE);
         RTE.baseToolbarConf = new RTE.ToolbarConfiguration();
@@ -792,7 +1204,7 @@ export var RTE =  {
                         else{
                             element.removeClass('disabled');
                         }
-                        instance.trigger('contentupdated')
+                        instance.trigger('change');
                     });
 
                     instance.on('contentupdated', function(e){
@@ -820,7 +1232,7 @@ export var RTE =  {
                         else{
                             element.removeClass('disabled');
                         }
-                        instance.trigger('contentupdated');
+                        instance.trigger('change');
                     });
 
                     instance.on('contentupdated', function(e){
@@ -839,24 +1251,26 @@ export var RTE =  {
             return {
                 template: '<i tooltip="editor.option.bold"></i>',
                 link: function(scope, element, attributes){
-                    element.on('click', function(){
-                        if(!instance.editZone.is(':focus')){
+                    element.on('click', function () {
+                        if (!instance.editZone.is(':focus')) {
                             instance.focus();
                         }
-                        instance.execCommand('bold');
-                        if(document.queryCommandState('bold')){
-                            element.addClass('toggled');
-                        }
-                        else{
+
+                        if (document.queryCommandState('bold')) {
                             element.removeClass('toggled');
+                            instance.selection.css({ 'font-weight': 'normal' });
+                        }
+                        else {
+                            element.addClass('toggled');
+                            instance.selection.css({ 'font-weight': 'bold' });
                         }
                     });
 
-                    instance.on('selectionchange', function(e){
-                        if(document.queryCommandState('bold')){
+                    instance.on('selectionchange', function (e) {
+                        if (document.queryCommandState('bold')) {
                             element.addClass('toggled');
                         }
-                        else{
+                        else {
                             element.removeClass('toggled');
                         }
                     });
@@ -875,7 +1289,7 @@ export var RTE =  {
 
                         if(document.queryCommandState('italic')){
                             element.removeClass('toggled');
-                            instance.selection.css({ 'font-style': '' });
+                            instance.selection.css({ 'font-style': 'normal' });
                         }
                         else{
                             element.addClass('toggled');
@@ -901,7 +1315,7 @@ export var RTE =  {
                 link: function(scope, element, attributes){
                     element.on('click', function(){
                         if (document.queryCommandState('underline')) {
-                            instance.selection.css({ 'text-decoration': 'none' });
+                            instance.execCommand('underline');
                             element.removeClass('toggled');
                         }
                         else {
@@ -922,6 +1336,21 @@ export var RTE =  {
             };
         });
 
+        function beforeJustify(instance){
+            instance.editZone.find('mathjax').html('');
+            instance.editZone.find('mathjax').removeAttr('contenteditable');
+        }
+
+        function afterJustify(instance){
+            instance.editZone.find('mathjax').each(function(index, item){
+                var scope = angular.element(item).scope();
+                scope.updateFormula(scope.formula)
+            })
+            instance.editZone.find('mathjax').attr('contenteditable', 'false');
+
+            instance.trigger('justify-changed');
+        }
+
         RTE.baseToolbarConf.option('justifyLeft', function(instance){
             return {
                 template: '<i tooltip="editor.option.justify.left"></i>',
@@ -931,6 +1360,7 @@ export var RTE =  {
                         if(!instance.editZone.is(':focus')){
                             instance.focus();
                         }
+                        beforeJustify(instance)
                         instance.execCommand('justifyLeft');
                         if(document.queryCommandState('justifyLeft')){
                             element.addClass('toggled');							}
@@ -939,24 +1369,12 @@ export var RTE =  {
                         }
 
                         instance.editZone.find('img').each(function (index, item) {
-                            if ($(item).css('text-align') === 'left') {
+                            if ($(item).css('text-align') === 'left' && !$(item).hasClass('smiley')) {
                                 $(item).css({ 'float': 'left', 'z-index': 0 });
                             }
                         });
 
-                        instance.editZone.find('mathjax').each(function (index, item) {
-                            var sel = window.getSelection();
-                            var range = sel.getRangeAt(0);
-                            if (range.intersectsNode && range.intersectsNode(item)) {
-                                if (element.hasClass('toggled')) {
-                                    $(item).css({ float: 'left' });
-                                }
-                            }
-                        });
-
-                        window.MathJax.Hub.Rerender();
-
-                        instance.trigger('justify-changed');
+                        afterJustify(instance)
                     });
 
                     instance.on('selectionchange', function(e){
@@ -989,6 +1407,7 @@ export var RTE =  {
                             instance.focus();
                         }
 
+                        beforeJustify(instance);
                         if(!document.queryCommandState('justifyRight')){
                             instance.execCommand('justifyRight');
                             element.addClass('toggled');
@@ -999,27 +1418,12 @@ export var RTE =  {
                         }
 
                         instance.editZone.find('img').each(function (index, item) {
-                            if ($(item).css('text-align') === 'right') {
+                            if ($(item).css('text-align') === 'right' && !$(item).hasClass('smiley')) {
                                 $(item).css({ 'float': 'right', 'z-index': '0' });
                             }
                         });
 
-                        instance.editZone.find('mathjax').each(function (index, item) {
-                            var sel = window.getSelection();
-                            var range = sel.getRangeAt(0);
-                            if (range.intersectsNode && range.intersectsNode(item)) {
-                                if (element.hasClass('toggled')) {
-                                    $(item).css({ float: 'right' });
-                                }
-                                else {
-                                    $(item).css({ float: 'left' });
-                                }
-                            }
-                        });
-
-                        window.MathJax.Hub.Rerender();
-
-                        instance.trigger('justify-changed');
+                        afterJustify(instance);
                     });
 
                     instance.on('selectionchange', function (e) {
@@ -1052,6 +1456,7 @@ export var RTE =  {
                             instance.focus();
                         }
 
+                        beforeJustify(instance);
                         if(!document.queryCommandState('justifyCenter')){
                             instance.execCommand('justifyCenter');
                             element.addClass('toggled');
@@ -1062,32 +1467,17 @@ export var RTE =  {
                         }
 
                         instance.editZone.find('img').each(function (index, item) {
-                            if ($(item).css('text-align') === 'center') {
+                            if ($(item).css('text-align') === 'center' && !$(item).hasClass('smiley')) {
                                 // z-index is a hack to track margin width; auto width is computed as 0 in FF
                                 $(item).css({ 'float': 'none', 'margin': 'auto', 'z-index': '1' });
                             }
-                            else{
+                            else if(!$(item).hasClass('smiley')){
                                 // z-index is a hack to track margin width; auto width is computed as 0 in FF
                                 $(item).css({ 'float': 'left', 'z-index': '0' });
                             }
                         });
 
-                        instance.editZone.find('mathjax').each(function (index, item) {
-                            var sel = window.getSelection();
-                            var range = sel.getRangeAt(0);
-                            if (range.intersectsNode && range.intersectsNode(item)) {
-                                if (element.hasClass('toggled')) {
-                                    $(item).css({ 'float': 'none', 'margin': 'auto' });
-                                }
-                                else {
-                                    $(item).css({ float: 'left' });
-                                }
-                            }
-                        });
-
-                        window.MathJax.Hub.Rerender();
-
-                        instance.trigger('justify-changed');
+                        afterJustify(instance);
                     });
 
                     instance.on('selectionchange', function(e){
@@ -1124,6 +1514,7 @@ export var RTE =  {
                             instance.focus();
                         }
 
+                        beforeJustify(instance);
                         if(!document.queryCommandState('justifyFull')){
                             element.addClass('toggled');
                             instance.execCommand('justifyFull');
@@ -1133,19 +1524,7 @@ export var RTE =  {
                             element.removeClass('toggled');
                         }
 
-                        instance.editZone.find('mathjax').each(function (index, item) {
-                            var sel = window.getSelection();
-                            var range = sel.getRangeAt(0);
-                            if (range.intersectsNode && range.intersectsNode(item)) {
-                                if (element.hasClass('toggled')) {
-                                    $(item).css({ float: 'left' });
-                                }
-                            }
-                        });
-
-                        window.MathJax.Hub.Rerender();
-
-                        instance.trigger('justify-changed');
+                        afterJustify(instance);
                     });
 
                     instance.on('selectionchange', function(e){
@@ -1173,7 +1552,8 @@ export var RTE =  {
             return {
                 template: '<i tooltip="editor.option.ulist"></i>',
                 link: function(scope, element, attributes){
-                    element.on('mousedown', function(){
+                    element.on('mousedown', function () {
+
                         if(!instance.editZone.is(':focus')){
                             instance.editZone.focus();
                         }
@@ -1265,17 +1645,24 @@ export var RTE =  {
                     element.on('click', 'i', function () {
                         element.find('input').click();
                     });
-                    if(!$.spectrum){
+                    if (navigator.userAgent.indexOf('Edge') !== -1) {
+                        element.find('input').attr('type', 'text');
+                    }
+                    if (!$.spectrum) {
                         $.spectrum = {};
                         http().get('/infra/public/spectrum/spectrum.js').done(function(data){
                             eval(data);
                             setSpectrum();
+                            if ($.spectrum && $.spectrum.palettes && element.find('input')[0].type === 'text') {
+                                $('body').find('.option.color input, .option.background-color input').spectrum({preferredFormat: "hex"});
+                                setSpectrum();
+                            }
                         });
                         var stylesheet = $('<link rel="stylesheet" type="text/css" href="/infra/public/spectrum/spectrum.css" />');
                         $('head').prepend(stylesheet);
                     }
-                    else if ($.spectrum && $.spectrum.palettes && element.find('input[type=color]')[0].type === 'text') {
-                        element.find("input[type=color]").spectrum();
+                    if ($.spectrum && $.spectrum.palettes && element.find('input')[0].type === 'text') {
+                        element.find('input').spectrum({ preferredFormat: "hex" });
                         setSpectrum();
                     }
                     scope.foreColor = "#000000";
@@ -1302,17 +1689,26 @@ export var RTE =  {
             return {
                 template: '<i></i><input tooltip="editor.option.backgroundcolor" type="color" />',
                 link: function(scope, element, attributes){
+                    element.on('click', 'i', function () {
+                        element.find('input').click();
+                    });
+                    if (navigator.userAgent.indexOf('Edge') !== -1) {
+                        element.find('input').attr('type', 'text');
+                    }
                     if(!$.spectrum){
                         $.spectrum = {};
                         http().get('/infra/public/spectrum/spectrum.js').done(function(data){
                             eval(data);
-                            setSpectrum();
+                            if ($.spectrum && $.spectrum.palettes && element.find('input')[0].type === 'text') {
+                                $('body').find('.option.color input, .option.background-color input').spectrum({ preferredFormat: "hex" });
+                                setSpectrum();
+                            }
                         });
                         var stylesheet = $('<link rel="stylesheet" type="text/css" href="/infra/public/spectrum/spectrum.css" />');
                         $('head').prepend(stylesheet);
                     }
-                    else if ($.spectrum && $.spectrum.palettes && element.find('input[type=color]')[0].type === 'text') {
-                        element.find('input[type=color]').spectrum();
+                    else if ($.spectrum && $.spectrum.palettes && element.find('input')[0].type === 'text') {
+                        element.find('input[type=color]').spectrum({ preferredFormat: "hex" });
                         setSpectrum();
                     }
                     element.children('input').on('change', function () {
@@ -1324,7 +1720,7 @@ export var RTE =  {
                     });
 
                     scope.$watch('backColor', function () {
-                        var rgbColor: { r?: number, g?: number, b?: number, a?: number } = {};
+                        var rgbColor = {} as any;
                         if (typeof scope.backColor === 'string') {
                             if(scope.backColor[0] === '#'){
                                 rgbColor = {
@@ -1373,7 +1769,7 @@ export var RTE =  {
                 template:
                 '<select-list display="font" display-as="fontFamily" placeholder="editor.font.placeholder" tooltip="editor.option.font">' +
                 '<opt ng-repeat="font in fonts" ng-click="setFontFamily(font)" ' +
-                'value="font" style="font-family: [[font.fontFamily]]">[[font.fontFamily]]</opt>' +
+                'value="font" ng-style="{ \'font-family\': font.fontFamily }">[[font.fontFamily]]</opt>' +
                 '</select-list>',
                 link: function(scope, element, attributes){
 
@@ -1397,8 +1793,15 @@ export var RTE =  {
                                 )
                             ),
                             function(fontFace){
+                                var fontName = fontFace.style.cssText.split('font-family:')[1].split(';')[0].trim();
+                                if(fontName.startsWith('"')){
+                                    fontName = fontName.substring(1);
+                                }
+                                if(fontName.endsWith('"')){
+                                    fontName = fontName.substring(0, fontName.length - 1);
+                                }
                                 return {
-                                    fontFamily: fontFace.style.cssText.split('font-family:')[1].split(';')[0]
+                                    fontFamily: fontName
                                 }
                             }
                         );
@@ -1412,6 +1815,9 @@ export var RTE =  {
                         importedFonts = _.uniq(importedFonts, function(item, key, a) { 
                             return item.fontFamily;
                         });
+                        importedFonts = _.reject(importedFonts, function(font){ 
+                            return font.fontFamily.trim() === 'generic-icons' || font.fontFamily.trim() === 'editor';
+                        });
                         scope.fonts = scope.fonts.concat(importedFonts);
                         scope.font = _.find(scope.fonts, function (font) {
                             return $('p').css('font-family').toLowerCase().indexOf(font.fontFamily.toLowerCase()) !== -1
@@ -1420,7 +1826,7 @@ export var RTE =  {
 
                     scope.setFontFamily = function (font) {
                         scope.font = font;
-                        instance.execCommand('fontName', false, scope.font.fontFamily);
+                        instance.selection.css({ 'font-family': font.fontFamily });
                     };
 
                     instance.on('selectionchange', function(e){
@@ -1436,7 +1842,7 @@ export var RTE =  {
             return {
                 template: '<select-list placeholder="size" display="font.fontSize.size" tooltip="editor.option.fontSize">' +
                 '<opt ng-repeat="fontSize in font.fontSizes" ng-click="setSize(fontSize)" ' +
-                    'style="font-size: [[fontSize.size]]px; line-height: [[fontSize.size]]px">' +
+                    'ng-style="{ \'font-size\': fontSize.size + \'px\', \'line-height\': fontSize.size + \'px\'}">' +
                         '[[fontSize.size]]' +
                     '</opt>' +
                 '</select-list>',
@@ -1624,13 +2030,21 @@ export var RTE =  {
                         if (!instance.editZone.is(':focus')) {
                             instance.focus();
                         }
+
+                        var format = {
+                            'font-style': 'normal',
+                            'background-color': 'transparent',
+                            'font-weight': 'normal',
+                            'text-decoration': 'none',
+                            'color': 'inherit',
+                            'font-size': 'initial',
+                            'line-height': 'initial',
+                            'font-family': 'inherit'
+                        };
+
+                        instance.selection.css(format);
                         instance.execCommand('removeFormat');
-                        if (document.queryCommandEnabled('removeFormat')) {
-                            element.removeClass('disabled');
-                        }
-                        else {
-                            element.addClass('disabled');
-                        }
+                        instance.trigger('selectionchange', { selection: instance.selection });
                     });
 
                     instance.on('selectionchange', function (e) {
@@ -1661,7 +2075,7 @@ export var RTE =  {
                         visibility: 'protected'
                     }
 
-                    if(instance.element.attr('public')){
+                    if(instance.visibility === 'public'){
                         scope.imageOption.visibility = 'public'
                     }
 
@@ -1679,7 +2093,7 @@ export var RTE =  {
                             label: 'editor.remove.image',
                             action: function (e) {
                                 $(e.target).remove();
-                                instance.trigger('contentupdated');
+                                instance.trigger('change');
                             }
                         },
                         {
@@ -1687,7 +2101,7 @@ export var RTE =  {
                             action: function (e) {
                                 $(e.target).css({ float: 'right', margin: '10px', 'z-index': '0' });
                                 instance.selection.selectNode(e.target);
-                                instance.trigger('contentupdated');
+                                instance.trigger('change');
                                 instance.trigger('justify-changed');
                             }
                         },
@@ -1696,7 +2110,7 @@ export var RTE =  {
                             action: function (e) {
                                 $(e.target).css({ float: 'left', margin: '10px', 'z-index': '0' });
                                 instance.selection.selectNode(e.target);
-                                instance.trigger('contentupdated');
+                                instance.trigger('change');
                                 instance.trigger('justify-changed');
                             }
                         },
@@ -1705,7 +2119,7 @@ export var RTE =  {
                             action: function (e) {
                                 $(e.target).css({ float: 'none', margin: 'auto', 'z-index': '1' });
                                 instance.selection.selectNode(e.target);
-                                instance.trigger('contentupdated');
+                                instance.trigger('change');
                                 instance.trigger('justify-changed');
                             }
                         }
@@ -1720,11 +2134,15 @@ export var RTE =  {
                         }
                         var html = '<div>';
                         scope.imageOption.display.files.forEach(function (file) {
-                            html += '<img src="' + path + file._id + '" draggable native />';
+                            html += '<img src="' + path + file._id + '" class="latest-image" />';
                         });
 
                         html += '<div><br></div><div><br></div></div>';
                         instance.selection.replaceHTML(html);
+                        let image = instance.editZone
+                            .find('.latest-image')
+                            .removeClass('latest-image');
+                        instance.selection.selectNode(image[0]);
                         instance.addState(instance.editZone.html());
                         scope.imageOption.display.pickFile = false;
                         scope.imageOption.display.files = [];
@@ -1743,7 +2161,6 @@ export var RTE =  {
                                 image.remove();
                             }
                             instance.addState(instance.editZone.html());
-
                             ui.extendElement.resizable(instance.editZone.find('img'), {
                                 moveWithResize: false,
                                 mouseUp: function() {
@@ -1751,7 +2168,7 @@ export var RTE =  {
                                     instance.addState(instance.editZone.html());
                                 }
                             });
-                        }, 200)
+                        }, 20)
                     });
                 }
             }
@@ -1776,7 +2193,7 @@ export var RTE =  {
                         visibility: 'protected'
                     }
 
-                    if (instance.element.attr('public')) {
+                    if (instance.visibility === 'public') {
                         scope.attachmentOption.visibility = 'public'
                     }
 
@@ -1847,7 +2264,7 @@ export var RTE =  {
             }
         });
 
-        RTE.baseToolbarConf.option('sound', function (instance) {
+        RTE.baseToolbarConf.option('sound', function(instance){
             return {
                 template: '<i ng-click="soundOption.display.pickFile = true" tooltip="editor.option.sound"></i>' +
                 '<div ng-if="soundOption.display.pickFile">' +
@@ -1855,14 +2272,14 @@ export var RTE =  {
                 '<media-library ng-change="updateContent()" ng-model="soundOption.display.file" file-format="\'audio\'" visibility="soundOption.visibility"></media-library>' +
                 '</lightbox>' +
                 '</div>',
-                link: function (scope, element, attributes) {
+                link: function(scope, element, attributes){
                     instance.editZone.addClass('drawing-zone');
                     scope.soundOption = {
                         display: { pickFile: false },
                         visibility: 'protected'
                     }
 
-                    if (instance.element.attr('public')) {
+                    if (instance.visibility === 'public') {
                         scope.soundOption.visibility = 'public'
                     }
                     scope.updateContent = function () {
@@ -1873,34 +2290,12 @@ export var RTE =  {
 
                         instance.selection.replaceHTML(
                             '<div><br /></div>' +
-                            '<div class="audio-wrapper"><audio src="' + path + scope.soundOption.display.file._id + '" controls draggable native></audio></div>' +
+                            '<div class="audio-wrapper"><audio src="' + path + scope.soundOption.display.file._id + '" controls preload="none"></audio></div>' +
                             '<div><br /></div>'
                         );
-
                         scope.soundOption.display.pickFile = false;
                         scope.soundOption.display.file = undefined;
                     };
-
-                    instance.element.on('drop', function (e) {
-                        var audio;
-                        if (e.originalEvent.dataTransfer.mozSourceNode) {
-                            audio = e.originalEvent.dataTransfer.mozSourceNode;
-                        }
-
-                        //delay to account for sound destruction and recreation
-                        setTimeout(function () {
-                            if (audio && audio.tagName && audio.tagName === 'AUDIO') {
-                                audio.remove();
-                            }
-                            ui.extendElement.resizable(instance.editZone.find('audio'), {
-                                moveWithResize: false,
-                                mouseUp: function () {
-                                    instance.trigger('contentupdated');
-                                    instance.addState(instance.editZone.html());
-                                }
-                            });
-                        }, 200)
-                    });
                 }
             }
         });
@@ -1908,19 +2303,13 @@ export var RTE =  {
         RTE.baseToolbarConf.option('embed', function (instance) {
             return {
                 template: '<i ng-click="display.copyEmbed = true" tooltip="editor.option.embed"></i>' +
-                '<lightbox show="display.copyEmbed" on-close="display.copyEmbed = false;">' +
-                '<h2><i18n>editor.option.embed</i18n></h2>' +
-                '<p class="info"><i18n>info.video.embed</i18n></p>' +
-                '<textarea ng-model="display.htmlCode"></textarea>' +
-                '<div class="row">' +
-                '<button type="button" ng-click="applyHtml()" class="right-magnet"><i18n>apply</i18n></button>' +
-                '<button type="button" ng-click="display.copyEmbed = false" class="cancel right-magnet"><i18n>cancel</i18n></button>' +
-                '</div>' +
-                '</lightbox>',
+                '<embedder ng-model="display.htmlCode" on-change="applyHtml()" show="display.copyEmbed"></embedder>',
                 link: function (scope, element, attributes) {
-                    scope.display = {};
+                    scope.display = {
+                        htmlCode: ''
+                    };
+
                     scope.applyHtml = function (template) {
-                        scope.display.copyEmbed = false;
                         instance.selection.replaceHTML(scope.display.htmlCode);
                     };
                 }
@@ -1949,14 +2338,11 @@ export var RTE =  {
                         if(editNode){
                             $(editNode).attr('formula', scope.display.formula);
                             angular.element(editNode.firstChild).scope().updateFormula(scope.display.formula);
+                            instance.trigger('change');
                         }
                         else{
-                            instance.selection.replaceHTML(instance.compile(
-                                '<div class="row"><br/></div>' +
-                                '<div class="row">' +
-                                    '<mathjax formula="'+ scope.display.formula + '"></mathjax>' +
-                                '</div>' +
-                                '<div><br /></div>'
+                            instance.selection.replaceHTMLInline(instance.compile(
+                                '<span>&nbsp;<mathjax contenteditable="false" formula="'+ scope.display.formula + '"></mathjax>&nbsp;</span>'
                             )(scope));
                         }
                         
@@ -2031,6 +2417,7 @@ export var RTE =  {
                     scope.linker.openLinker = function (appPrefix, address, element) {
                         var sel = window.getSelection();
                         instance.selection.range = sel.getRangeAt(0);
+                        this.rangeCount = 1;
                         scope.linker.display.chooseLink = true;
                         if (appPrefix) {
                             scope.linker.search.application.address = '/' + appPrefix;
@@ -2158,11 +2545,15 @@ export var RTE =  {
                             if(scope.linker.params.tooltip){
                                 linkNode.attr('tooltip', scope.linker.params.tooltip);
                             }
+                            else if(linkNode.attr('tooltip')){
+                                linkNode.removeAttr('tooltip');
+                                linkNode.off('mouseover');
+                            }
                         }
 
                         if (selectedNode && selectedNode.nodeName === 'A') {
                             instance.selection.moveCaret(linkNode[0], linkNode.text().length);
-                            instance.trigger('contentupdated');
+                            instance.trigger('change');
                             scope.linker.display.chooseLink = false;
                             scope.linker.params = {};
                             scope.linker.display.search = {
@@ -2175,7 +2566,7 @@ export var RTE =  {
 
                         if (instance.selection.isCursor()) {
                             linkNode.text(scope.linker.params.link);
-                            instance.selection.replaceHTML(linkNode[0].outerHTML);
+                            instance.selection.replaceHTMLInline(instance.compile(linkNode[0].outerHTML)(scope));
                         }
                         else {
                             instance.selection.wrapText(linkNode);
@@ -2205,8 +2596,8 @@ export var RTE =  {
                         scope.linker.apps = _.filter(model.me.apps, function(app){
                             return _.find(
                                 apps,
-                                function(match){
-                                    return app.address.indexOf(match) !== -1 && app.icon
+                                function (match) {
+                                    return app.address.indexOf(match) !== -1 && app.icon && app.address.indexOf('#') === -1
                                 }
                             );
                         });
@@ -2274,8 +2665,8 @@ export var RTE =  {
                 '<i tooltip="editor.option.smileys"></i>' +
                 '<lightbox show="display.pickSmiley" on-close="display.pickSmiley = false;">' +
                 '<h2>Insérer un smiley</h2>' +
-                '<div class="row">' +
-                '<img ng-repeat="smiley in smileys" ng-click="addSmiley(smiley)" skin-src="/img/smileys/[[smiley]].png" />' +
+                '<div class="row smileys">' +
+                '<img ng-repeat="smiley in smileys" class="smiley" ng-click="addSmiley(smiley)" skin-src="/img/smileys/[[smiley]].png" />' +
                 '</div>' +
                 '</lightbox>',
                 link: function(scope, element, attributes){
@@ -2284,8 +2675,10 @@ export var RTE =  {
                     scope.addSmiley = function (smiley) {
                         //do not replace with i, as i is used by other websites for italic and
                         //is often copy-pasted in the editor
-                        var content = instance.compile('<img skin-src="/img/smileys/' + smiley + '.png" draggable native style="height: 60px; width: 60px;" />')(scope.$parent);
-                        instance.selection.replaceHTML(content);
+                        var content = instance.compile(
+                            '<img skin-src="/img/smileys/' + smiley + '.png" class="smiley" />'
+                        )(scope.$parent);
+                        instance.selection.replaceHTMLInline(content);
                         scope.display.pickSmiley = false;
                     }
 
@@ -2299,7 +2692,7 @@ export var RTE =  {
         RTE.baseToolbarConf.option('table', function(instance){
             return {
                 template: '' +
-                '<popover mouse-event="click">' +
+                '<popover mouse-event="click" on-close="resetScroll()">' +
                 '<i popover-opener opening-event="click" tooltip="editor.option.table"></i>' +
                 '<popover-content>' +
                 '<div class="draw-table"></div>' +
@@ -2316,6 +2709,13 @@ export var RTE =  {
                             line.append('<div class="one cell"></div>');
                         }
                     }
+
+                    scope.resetScroll = function(){
+                        element.parents().css({ overflow: '' });
+                        element.parents('editor-toolbar').each(function (index, item) {
+                            $(item).css({ 'margin-top': '', 'min-height': '', height: '' })
+                        });
+                    };
 
                     ui.extendSelector.touchEvents('[contenteditable] td');
 
@@ -2365,12 +2765,14 @@ export var RTE =  {
                             $(table).append(row);
                             for(var j = 0; j <= $(this).index(); j++){
                                 var cell = $('<td></td>');
-                                cell.html('&nbsp;')
+                                cell.html('<br />')
                                 row.append(cell);
                             }
                         }
+
                         instance.selection.replaceHTML('<div>' + table.outerHTML + '</div>');
                         instance.trigger('contentupdated');
+                        
                     });
 
                     instance.bindContextualMenu(scope, 'td', [
@@ -2378,7 +2780,7 @@ export var RTE =  {
                             label: 'editor.add.row',
                             action: function(e){
                                 var newRow = $($(e.target).parent()[0].outerHTML);
-                                newRow.find('td').html('&nbsp;');
+                                newRow.find('td').html('<br />');
                                 $(e.target).parent().after(newRow);
                             }
 
@@ -2388,7 +2790,7 @@ export var RTE =  {
                             action: function(e){
                                 var colIndex = $(e.target).index();
                                 $(e.target).parents('table').find('tr').each(function(index, row){
-                                    $(row).children('td').eq(colIndex).after('<td>&nbsp;</td>')
+                                    $(row).children('td').eq(colIndex).after('<td><br /></td>')
                                 });
                             }
                         },
@@ -2425,8 +2827,7 @@ export var RTE =  {
                 '</ul>' +
                 '</lightbox>',
                 link: function (scope, element, attributes) {
-                    var split = $('#theme').attr('href').split('/');
-                    var skinPath = split.slice(0, split.length - 2).join('/') + '/../entcore-css-lib/editor-resources/img/';
+                    var skinPath = skin.basePath + '../entcore-css-lib/editor-resources/img/';
                     scope.templates = [
                         {
                             title: 'editor.templates.emptypage.title',
@@ -2640,15 +3041,14 @@ export var RTE =  {
                     if (navigator.userAgent.indexOf('Trident') !== -1 || navigator.userAgent.indexOf('Edge') !== -1) {
                         element.find('code').hide();
                     }
-
-                    http().loadScript('/infra/public/js/prism/prism.js');
-
                     $('body').append(
                         $('<link />')
                             .attr('rel', 'stylesheet')
                             .attr('type', 'text/css')
                             .attr('href', '/infra/public/js/prism/prism.css')
                     );
+
+                    http().get('/infra/public/js/prism/prism.js');
 
                     element.find('.close-focus').on('click', function(){
                         element.removeClass('focus');
@@ -2705,14 +3105,22 @@ export var RTE =  {
                     if(attributes.toolbarConf){
                         toolbarConf = scope.$eval(attributes.toolbarConf);
                     }
-
-                    var editorInstance = new RTE.Instance({
-                        toolbarConfiguration: toolbarConf,
-                        element: element,
-                        scope: scope,
-                        compile: $compile,
-                        editZone: editZone
-                    });
+                    
+                    var editorInstance;
+                    var instance = $parse(attributes.instance);
+                    if(!instance(scope)){
+                        editorInstance = new RTE.Instance({
+                            toolbarConfiguration: toolbarConf,
+                            element: element,
+                            scope: scope,
+                            compile: $compile,
+                            editZone: editZone,
+                            visibility: scope.$parent.$eval(element.attr('visibility'))
+                        });
+                    }
+                    else{
+                        editorInstance = instance;
+                    }
 
                     editorInstance.addState('');
                     var ngModel = $parse(attributes.ngModel);
@@ -2721,7 +3129,7 @@ export var RTE =  {
                     }
 
                     scope.$watch(
-                        function(){
+                        function () {
                             return ngModel(scope);
                         },
                         function (newValue) {
@@ -2733,8 +3141,18 @@ export var RTE =  {
                                 $(item).append(mathItem);
                             });
 
-                            if(newValue !== editZone.html() && !editZone.is(':focus')){
+                            if (
+                                newValue !== editZone.html() &&
+                                !editZone.is(':focus') &&
+                                $('editor-toolbar').find(':focus').length === 0
+                            ) {
                                 editZone.html($compile(ngModel(scope))(scope));
+                                editZone.find('i18n').each(function(index, item){
+                                    var parent = $(item).parent()[0];
+                                    var newEl = $('<span></span>').html($(item).html());
+                                    parent.insertBefore(newEl[0], item);
+                                    item.remove();
+                                });
                             }
                             if(newValue !== htmlZone.val() && !htmlZone.is(':focus')){
                                 if(window.html_beautify){
@@ -2752,16 +3170,12 @@ export var RTE =  {
 
                     $(window).on('resize', function () {
                         highlightZone.css({ top: (element.find('editor-toolbar').height() + 1) + 'px' });
+                        toolbarElement.css({ 'position': 'relative' });
                     });
 
                     var previousScroll = 0;
                     function sticky() {
                         if(element.parents('.editor-media').length > 0){
-                            return;
-                        }
-                            
-                        if (previousScroll === (window.scrollY || window.pageYOffset)) {
-                            var placeEditorToolbar = requestAnimationFrame(sticky);
                             return;
                         }
                         
@@ -2802,7 +3216,7 @@ export var RTE =  {
                         var placeEditorToolbar = requestAnimationFrame(sticky);
                     }
 
-                    if ($(window).width() > ui.breakpoints.tablette) {
+                    if(ui.breakpoints.tablette <= $(window).width()){
                         var placeEditorToolbar = requestAnimationFrame(sticky);
                     }
 
@@ -2853,7 +3267,7 @@ export var RTE =  {
                         });
                     });
 
-                    function b64toBlob(b64Data, contentType, sliceSize?) {
+                    function b64toBlob(b64Data, contentType, sliceSize) {
                         contentType = contentType || '';
                         sliceSize = sliceSize || 512;
 
@@ -2885,8 +3299,21 @@ export var RTE =  {
 
                         scope.$apply(function(){
                             scope.$eval(attributes.ngChange);
-                            ngModel.assign(scope, editZone.html());
+                            let content = editZone.html();
+                            ngModel.assign(scope, content);
                         });
+                    });
+
+                    editorInstance.on('change', function(){
+                        editorInstance.trigger('contentupdated');
+                        setTimeout(function(){
+                            
+                            if(attributes.onChange){
+                                scope.$eval(attributes.onChange);
+                            }
+                            
+                            scope.$apply();
+                        }, 10);
                     });
 
                     editorInstance.on('contentupdated', function () {
@@ -2923,7 +3350,7 @@ export var RTE =  {
                         editZone.find('img').each(function(index, item){
                             if($(item).attr('src').startsWith('data:')){
                                 var split = $(item).attr('src').split('data:')[1].split(',');
-                                var blob = b64toBlob(split[1], split[0].split(';')[0]);
+                                var blob = (b64toBlob as any)(split[1], split[0].split(';')[0]);
                                 blob.name = 'image';
                                 $(item).attr('src', 'http://loading');
                                 workspace.Document.prototype.upload(blob, '', function(file){
@@ -2934,11 +3361,20 @@ export var RTE =  {
                             }
                         });
 
-                        scope.$apply(function(){
+                        if (!scope.$$phase) {
+                            scope.$apply(function () {
+                                scope.$eval(attributes.ngChange);
+                                let content = editZone.html();
+                                $(content).find('mathjax').html('');
+                                ngModel.assign(scope, content);
+                            });
+                        }
+                        else {
                             scope.$eval(attributes.ngChange);
-                            var content = editZone.html();
+                            let content = editZone.html();
+                            $(content).find('mathjax').html('');
                             ngModel.assign(scope, content);
-                        });
+                        }
                     });
 
                     var placeToolbar = function () {
@@ -2954,7 +3390,7 @@ export var RTE =  {
                     element.on('click', function(e){
                         placeToolbar();
 
-                        if(e.target === element.find('.close-focus')[0]){
+                        if(e.target === element.find('.close-focus')[0] || element.hasClass('focus')){
                             return;
                         }
 
@@ -2964,6 +3400,14 @@ export var RTE =  {
                         element.parents('grid-cell').data('lock', true);
                         if ($(window).width() < ui.breakpoints.tablette) {
                             $('body').css({ overflow: 'hidden' });
+                            window.scrollTo(0,0);
+                            setTimeout(function(){
+                                var sel = document.getSelection();
+                                var r = document.createRange();
+                                r.setStart(editZone[0].firstChild, 0);
+                                sel.removeAllRanges();
+                                sel.addRange(r);
+                            }, 600);
                         }
                     });
 
@@ -2973,10 +3417,13 @@ export var RTE =  {
                             element.find('.editor-toolbar-opener').removeClass('active');
                         }
 
-                        if(element.find(e.target).length === 0){
+                        if (element.find(e.target).length === 0 && !$(e.target).hasClass('sp-choose') && element.hasClass('focus')) {
                             element.children('editor-toolbar').removeClass('show');
-                            element.trigger('editor-blur');
                             element.removeClass('focus');
+                            let content = editZone.html();
+                            ngModel.assign(scope, content);
+                            element.trigger('editor-blur');
+                            editorInstance.trigger('change');
                             $('body').css({ overflow: 'auto' });
                             element.parent().data('lock', false);
                             element.parents('grid-cell').data('lock', false);
@@ -3015,8 +3462,28 @@ export var RTE =  {
                     var editingTimer;
 
                     editZone.on('paste', function () {
-                        editorInstance.addState(editZone.html());
-                        editorInstance.trigger('contentupdated');
+                        setTimeout(function(){
+                            editorInstance.editZone.find('[resizable]').removeAttr('resizable').css('cursor', 'initial');
+                            editorInstance.editZone.find('[bind-html]').removeAttr('bind-html');
+                            editorInstance.editZone.find('[ng-include]').removeAttr('ng-include');
+                            editorInstance.editZone.find('[ng-repeat]').removeAttr('ng-repeat');
+                            editorInstance.editZone.find('[data-ng-repeat]').removeAttr('data-ng-repeat');
+                            editorInstance.editZone.find('[ng-transclude]').removeAttr('ng-transclude');
+                            if(editorInstance.editZone.find('portal').length){
+                                var portal = editorInstance.editZone.find('portal');
+                                editorInstance.editZone[0].innerHTML = $('<div>' + (portal.find('[bind-html]').html() || '') + '</div>')
+                            }
+                            editorInstance.addState(editZone.html());
+                            if(editorInstance.editZone[0].childNodes.length > editorInstance.editZone[0].children.length){
+                                var wrapper = $('<div></div>');
+                                while(editorInstance.editZone[0].childNodes.length){
+                                    wrapper.append(editorInstance.editZone[0].childNodes[0]);
+                                }
+                                editorInstance.editZone.append(wrapper);
+                            }
+                            editorInstance.trigger('contentupdated');
+                            editorInstance.scope.$apply();
+                        }, 100);
                     });
 
                     editZone.on('keydown', function (e) {
@@ -3033,11 +3500,11 @@ export var RTE =  {
                                 if (initialOffset === currentTextNode.textContent.length) {
                                     initialOffset = -1;
                                 }
-                                if (range.startContainer.parentNode.innerHTML === '&nbsp;' && range.startOffset === 1) {
+                                if (range.startContainer.parentNode.innerHTML === '&#8203;' && range.startOffset === 1) {
                                     var node = range.startContainer.parentNode;
                                     
                                     setTimeout(function () {
-                                        node.innerHTML = node.innerHTML.substring(6);
+                                        node.innerHTML = node.innerHTML.substring(7);
                                         setTimeout(function () {
                                             var range = document.createRange();
                                             if (initialOffset === -1) {
@@ -3046,9 +3513,8 @@ export var RTE =  {
                                             range.setStart((node.firstChild || node), initialOffset);
                                             sel.removeAllRanges();
                                             sel.addRange(range);
-                                        }, 10)
-                                        
-                                    }, 10);
+                                        }, 1);
+                                    }, 1);
                                     
                                 }
                             }
@@ -3063,71 +3529,115 @@ export var RTE =  {
                             editorInstance.addState(editZone.html());
                             
                             var parentContainer = range.startContainer;
-                            var newLine = $('<div>&nbsp;</div>');
+
+                            if (
+                                    (parentContainer.nodeType === 1 && parentContainer.nodeName === 'LI') ||
+                                    (parentContainer.parentNode.nodeType === 1 && parentContainer.parentNode.nodeName === 'LI') ||
+                                    (parentContainer.nodeType === 1 && parentContainer.nodeName === 'TD') ||
+                                    (parentContainer.parentNode.nodeType === 1 && parentContainer.parentNode.nodeName === 'TD')
+                                ) {
+                                return;
+                            }
+
+                            var blockContainer = parentContainer;
+                            while (blockContainer.nodeType !== 1 || textNodes.indexOf(blockContainer.nodeName) !== -1) {
+                                blockContainer = blockContainer.parentNode;
+                            }
                             if (parentContainer === editZone[0]) {
-                                parentContainer.appendChild(newLine[0]);
+                                var wrapper = $('<div></div>');
+                                $(editZone[0]).append(wrapper);
+                                wrapper.html('&#8203;');
+                                blockContainer = wrapper[0];
+                                parentContainer = wrapper[0];
                             }
-                            else {
-                                if (parentContainer.nodeType !== 1) {
-                                    parentContainer = parentContainer.parentNode;
+                            if (blockContainer === editZone[0]) {
+                                var startOffset = range.startOffset;
+                                var wrapper = $('<div></div>');
+                                
+                                while (editZone[0].childNodes.length) {
+                                    $(wrapper).append(editZone[0].childNodes[0]);
                                 }
-                                if (parentContainer.nodeName !== 'LI') {
-                                    e.preventDefault();
-                                    var rangeStart = 1;
-                                    if (
-                                        range.startContainer.nodeType !== 1 &&
-                                        range.startOffset < range.startContainer.textContent.length
-                                    ) {
-                                        var content = parentContainer.textContent.substring(range.startOffset, parentContainer.textContent.length);
-                                        if (!content) {
-                                            content = '&nbsp;';
-                                        }
-                                        else {
-                                            rangeStart = 0;
-                                        }
-                                        newLine.html(content);
-                                        range.startContainer.textContent = range.startContainer.textContent.substring(0, range.startOffset);
+                                $(blockContainer).append(wrapper);
+                                blockContainer = wrapper[0];
+                                var sel = document.getSelection();
+                                var r = document.createRange();
+                                r.setStart(parentContainer, startOffset);
+                                sel.removeAllRanges();
+                                sel.addRange(r);
+                                range = r;
+                            }
+                            var newNodeName = 'div';
+                            if ((parentContainer.nodeType === 1 && range.startOffset < parentContainer.childNodes.length)
+                                || (parentContainer.nodeType === 3 && range.startOffset < parentContainer.textContent.length)) {
+                                newNodeName = blockContainer.nodeName.toLowerCase();
+                            }
+                            var newLine = $('<' + newNodeName + '>&#8203;</' + newNodeName + '>');
 
-                                        var sibling = range.startContainer.nextSibling;
-                                        do {
-                                            newLine.append(sibling);
-                                            sibling = range.startContainer.nextSibling;
-                                        } while (sibling !== null);
+                            blockContainer.parentNode.insertBefore(newLine[0], blockContainer.nextSibling);
 
-                                        if (!(parentContainer as any).wholeText) {
-                                            // FF forces encode on textContent, this is a hack to get the actual entities codes,
-                                            // since innerHTML doesn't exist on text nodes
-                                            parentContainer.textContent = $('<div>&nbsp;</div>')[0].textContent;
-                                        }
-                                    }
-                                    if (
-                                        range.startContainer.nodeType === 1 &&
-                                        range.startOffset < (range.startContainer as any).children.length
-                                    ) {
-                                        for (var i = range.startOffset; i < (range.startContainer as any).children.length; i++) {
-                                            (range.startContainer as any).children[i].remove();
-                                            newLine.append($((range.startContainer as any).children[i].outerHTML));
-                                        }
-                                    }
-
-                                    var container = parentContainer;
-                                    if (container.nodeType !== 1) {
-                                        container = container.parentNode;
-                                    }
-                                    if (container.nextSibling) {
-                                        container.parentNode.insertBefore(newLine[0], container.nextSibling);
-                                    }
-                                    else {
-                                        container.parentNode.appendChild(newLine[0]);
-                                    }
-
-                                    var range = document.createRange();
-                                    range.setStart(newLine[0].firstChild || newLine[0], rangeStart);
-
-                                    sel.removeAllRanges();
-                                    sel.addRange(range);
+                            newLine.attr('style', $(blockContainer).attr('style'));
+                            newLine.attr('class', $(blockContainer).attr('class'));
+                            
+                            e.preventDefault();
+                            var rangeStart = 1;
+                            if(parentContainer.nodeType === 3){
+                                var content = parentContainer.textContent.substring(range.startOffset, parentContainer.textContent.length);
+                                if(!content){
+                                    content = '&#8203;';
+                                }
+                                else {
+                                    rangeStart = 0;
+                                }
+                                newLine.html(content);
+                                parentContainer.textContent = parentContainer.textContent.substring(0, range.startOffset);
+                            }
+                            else{
+                                while(parentContainer.childNodes.length > range.startOffset){
+                                    newLine.append(parentContainer.childNodes[range.startOffset]);
                                 }
                             }
+
+                            var nodeCursor = parentContainer;
+                            while (nodeCursor !== blockContainer) {
+                                var cursorClone;
+                                if (nodeCursor.nodeType === 1) {
+                                    let nodeName = nodeCursor.nodeName.toLowerCase();
+                                    if(nodeName === 'a'){
+                                        nodeName = 'span';
+                                    }
+                                    cursorClone = document.createElement(nodeName);
+                                    $(cursorClone).attr('style', $(nodeCursor).attr('style'));
+                                    $(cursorClone).attr('class', $(nodeCursor).attr('class'));
+                                    $(cursorClone).append(newLine[0].firstChild);
+                                    newLine.prepend(cursorClone);
+                                }
+                                        
+                                var sibling = nodeCursor.nextSibling;
+                                while (sibling !== null) {
+                                    //order matters here. appending sibling before getting nextsibling breaks the loop
+                                    var currentSibling = sibling;
+                                    sibling = sibling.nextSibling;
+                                    newLine.append(currentSibling);
+                                }
+
+                                nodeCursor = nodeCursor.parentNode;
+                            }
+
+                            if (!(parentContainer as any).wholeText && parentContainer.nodeType === 3) {
+                                // FF forces encode on textContent, this is a hack to get the actual entities codes,
+                                // since innerHTML doesn't exist on text nodes
+                                parentContainer.textContent = $('<div>&#8203;</div>')[0].textContent;
+                            }
+
+                            var range = document.createRange();
+                            var newStartContainer = newLine[0];
+                            while(newStartContainer.firstChild){
+                                newStartContainer = newStartContainer.firstChild;
+                            }
+                            range.setStart(newStartContainer, rangeStart);
+
+                            sel.removeAllRanges();
+                            sel.addRange(range);
                         }
 
                         if (e.keyCode === 8 || e.keyCode === 46) {
@@ -3179,7 +3689,7 @@ export var RTE =  {
                                 if(!nextTag){
                                     var newLine = $('<tr></tr>');
                                     for(var i = 0; i < $(currentTag).parent('tr').children('td').length; i++){
-                                        newLine.append($('<td>&nbsp;</td>'));
+                                        newLine.append($('<td><br /></td>'));
                                     }
                                     nextTag = newLine.children('td')[0];
                                     $(currentTag).closest('table').append(newLine);
@@ -3190,11 +3700,11 @@ export var RTE =  {
                                 document.execCommand('indent');
                             }
                             else {
-                                editorInstance.selection.range.insertNode($('<span style="padding-left: 25px;">&nbsp;</span>')[0]);
+                                editorInstance.selection.range.insertNode($('<span style="padding-left: 25px;">&#8203;</span>')[0]);
                             }
                         }
                     });
-                    
+
                     editZone.on('keyup', function(e){
                         htmlZone.css({ 'min-height': '250px', height: 0 });
                         var newHeight = htmlZone[0].scrollHeight + 2;
@@ -3242,6 +3752,7 @@ export var RTE =  {
                             scope.$eval(attributes.ngChange);
                             ngModel.assign(scope, htmlZone.val());
                         });
+                        editorInstance.trigger('change');
                     });
 
                     element.on('dragover', function(e){
@@ -3251,15 +3762,18 @@ export var RTE =  {
                     element.on('dragleave', function(){
                         element.removeClass('droptarget');
                     });
-                    
+
                     element.find('[contenteditable]').on('drop', function (e) {
+                        if(!e.originalEvent.dataTransfer){
+                            return;
+                        }
                         var visibility: 'protected' | 'public' = 'protected';
-                        if (element.attr('public') !== undefined) {
+                        if (editorInstance.visibility === 'public') {
                             visibility = 'public';
                         }
 
                         element.removeClass('droptarget');
-                        var el: any = {};
+                        var el = {} as any;
                         var files = e.originalEvent.dataTransfer.files;
                         if(!files.length){
                             return;
@@ -3276,40 +3790,40 @@ export var RTE =  {
                             range.setStart(caretPosition.offsetNode, caretPosition.offset);
                         }
                         if (range) {
-                            
                             sel.removeAllRanges();
                             sel.addRange(range);
                             editorInstance.selection.range = range;
+                            editorInstance.selection.rangeCount = 1;
                         }
 
                         for(var i = 0; i < files.length; i++){
-                            (function () {
+                            (function(){
                                 var name = files[i].name;
-                                workspace.Document.prototype.upload(files[i], 'file-upload-' + name + '-' + i, function (doc) {
+                                workspace.Document.prototype.upload(files[i], 'file-upload-' + name + '-' + i, function(doc){
                                     var path = '/workspace/document/';
                                     if (visibility === 'public') {
                                         path = '/workspace/pub/document/';
                                     }
 
                                     if (name.indexOf('.mp3') !== -1 || name.indexOf('.wav') !== -1 || name.indexOf('.ogg') !== -1) {
-                                        el = $('<audio draggable native controls></audio>');
+                                        el = $('<audio controls></audio>');
                                         el.attr('src', path + doc._id)
                                     }
                                     else if (name.toLowerCase().indexOf('.png') !== -1 || name.toLowerCase().indexOf('.jpg') !== -1 || name.toLowerCase().indexOf('.jpeg') !== -1 || name.toLowerCase().indexOf('.svg') !== -1) {
-                                        el = $('<img draggable native />');
+                                        el = $('<img />');
                                         el.attr('src', path + doc._id)
                                     }
                                     else {
                                         el = $('<div class="download-attachments">' +
                                             '<h2>' + lang.translate('editor.attachment.title') + '</h2>' +
                                             '<div class="attachments">' +
-                                            '<a href="' + path + doc._id + '"><div class="download"></div>' + name + '</a>' +
-                                            '</div></div><div><br /><div><br /></div></div>');
+                                                '<a href="'+ path + doc._id + '"><div class="download"></div>' + name + '</a>' +
+                                        '</div></div><div><br /><div><br /></div></div>');
                                     }
 
                                     editorInstance.selection.replaceHTML('<div>' + el[0].outerHTML + '<div><br></div><div><br></div></div>');
                                 }, visibility);
-                            } ())
+                            }())
                         }
                     });
 
@@ -3345,6 +3859,10 @@ export var RTE =  {
                         }
                         return lang.translate(scope.display[scope.displayAs]);
                     };
+
+                    element.children('.options').on('mouseover', function (e){
+                        e.stopPropagation()
+                    });
 
                     element.children('.selected-value').on('click', function(){
                         if (element.children('.options').hasClass('hidden')) {
@@ -3401,7 +3919,11 @@ export var RTE =  {
                 controller: function(){},
                 restrict: 'E',
                 link: function (scope, element, attributes) {
-
+                    element.on('close', function(){
+                        if(attributes.onClose){
+                            scope.$eval(attributes.onClose);
+                        }
+                    });
                 }
             };
         });
@@ -3420,6 +3942,7 @@ export var RTE =  {
                             }
 
                             $('body').one('click', function (e) {
+                                parentNode.trigger('close');
                                 popover.addClass("hidden");
                             });
                         }
@@ -3438,6 +3961,7 @@ export var RTE =  {
 
                         if(mouseEvent === 'mouseover') {
                         parentNode.on('mouseout', function (e) {
+                            parentNode.trigger('close');
                             popover.addClass("hidden");
                         });
                     }
@@ -3462,34 +3986,29 @@ export var RTE =  {
                     formula: '@'
                 },
                 link: function (scope, element, attributes) {
-                    if (!window.MathJax) {
-                        http().loadScript('/infra/public/mathjax/MathJax.js').then(() => {
+                    if (!window.MathJax && !(window as any).MathJaxLoading) {
+                        let script = $('<script></script>')
+                            .attr('src', '/infra/public/mathjax/MathJax.js')
+                            .appendTo('head');
+                            
+                            script[0].async = false;
                             window.MathJax.Hub.Config({
                                 messageStyle: 'none',
                                 tex2jax: { preview: 'none' },
                                 jax: ["input/TeX", "output/CommonHTML"],
-                                extensions: ["tex2jax.js", "MathMenu.js", "MathZoom.js", "AssistiveMML.js"],
+                                extensions: ["tex2jax.js", "MathMenu.js", "MathZoom.js"],
                                 TeX: {
                                     extensions: ["AMSmath.js", "AMSsymbols.js", "noErrors.js", "noUndefined.js"]
                                 }
                             });
-                            window.MathJax.Hub.Typeset();
-                        });
+                            $('.MathJax_CHTML_Display').remove();
+                            window.MathJax.Hub.Queue(["Typeset", window.MathJax.Hub]);
                     }
 
                     scope.updateFormula = function(newVal){
                         element.text('$$' + newVal + '$$');
                         if (window.MathJax && window.MathJax.Hub) {
-                            window.MathJax.Hub.Config({
-                                messageStyle: 'none',
-                                tex2jax: { preview: 'none' },
-                                jax: ["input/TeX", "output/CommonHTML"],
-                                extensions: ["tex2jax.js", "MathMenu.js", "MathZoom.js", "AssistiveMML.js"],
-                                TeX: {
-                                    extensions: ["AMSmath.js", "AMSsymbols.js", "noErrors.js", "noUndefined.js"]
-                                }
-                            });
-                            window.MathJax.Hub.Typeset();
+                            window.MathJax.Hub.Queue(["Typeset", window.MathJax.Hub]);
                         }
                     };
 
@@ -3501,3 +4020,9 @@ export var RTE =  {
         });
     }
 };
+
+if(!window.entcore){
+    window.entcore = {};
+}
+
+window.entcore.RTE = RTE;

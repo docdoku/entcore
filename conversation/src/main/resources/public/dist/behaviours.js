@@ -42,9 +42,10 @@
 /************************************************************************/
 /******/ ([
 /* 0 */
-/***/ function(module, exports, __webpack_require__) {
+/***/ (function(module, exports, __webpack_require__) {
 
 	"use strict";
+	Object.defineProperty(exports, "__esModule", { value: true });
 	var entcore_1 = __webpack_require__(1);
 	var underscore_1 = __webpack_require__(5);
 	entcore_1.Behaviours.register('conversation', {
@@ -79,21 +80,21 @@
 	
 
 
-/***/ },
+/***/ }),
 /* 1 */
-/***/ function(module, exports) {
+/***/ (function(module, exports) {
 
 	module.exports = entcore;
 
-/***/ },
+/***/ }),
 /* 2 */,
 /* 3 */,
 /* 4 */,
 /* 5 */
-/***/ function(module, exports) {
+/***/ (function(module, exports) {
 
 	module.exports = _;
 
-/***/ }
+/***/ })
 /******/ ]);
 //# sourceMappingURL=behaviours.js.map

@@ -102,9 +102,12 @@ export class Document extends Model {
         if (data.created) {
             this.created = moment(data.created.split('.')[0]);
         }
-		else{
+		else if(data.sent){
 			this.created = moment(data.sent.split('.')[0]);
-		}
+        }
+        else {
+            this.created = moment();
+        }
 
 		this.owner = { userId: data.owner };
 
@@ -131,7 +134,7 @@ export class Document extends Model {
         }
         var formData = new FormData();
         formData.append('file', file, file.name);
-        http().postFile('/workspace/document?' + visibility + '=true&application=media-library&quality=' + workspace.quality + '&' + workspace.thumbnails, formData, { requestName: requestName }).done(function (data) {
+        http().postFile('/workspace/document?' + visibility + '=true&application=media-library&quality=0.7&' + workspace.thumbnails, formData, { requestName: requestName }).done(function (data) {
             if (typeof callback === 'function') {
                 callback(data);
             }
@@ -203,11 +206,18 @@ export class Document extends Model {
 
         return 'unknown';
     }
+
+    trash(): Promise<any> {
+        return new Promise((resolve, reject) => {
+            http().put('/workspace/document/trash/' + this._id).done(() => {
+                resolve();
+            });
+        });
+    }
 }
 
 export let workspace = {
-	quality: 0.7,
-	thumbnails: "thumbnail=120x120&thumbnail=150x150&thumbnail=100x100&thumbnail=290x290&thumbnail=48x48&thumbnail=82x82&thumbnail=381x381",
+	thumbnails: "thumbnail=120x120&thumbnail=150x150&thumbnail=100x100&thumbnail=290x290&thumbnail=48x48&thumbnail=82x82&thumbnail=381x381&thumbnail=1600x0",
 	Document: Document,
 	Folder: function(data){
 		this.updateData(data);
