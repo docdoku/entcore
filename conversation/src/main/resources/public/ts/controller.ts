@@ -5,7 +5,7 @@ import { $ } from 'entcore/libs/jquery/jquery';
 import { _ } from 'entcore/libs/underscore/underscore';
 
 export let conversationController = ng.controller('ConversationController', [
-    '$scope', '$timeout', 'model', 'route', function ($scope, $timeout, model, route) {
+    '$scope', '$timeout', 'model', 'route', function ($scope, $timeout, $compile, $sanitize, model, route) {
         $scope.viewsContainers = {};
         $scope.selection = {
             selectAll: false
@@ -209,30 +209,37 @@ export let conversationController = ng.controller('ConversationController', [
             });
         };
 
-        $scope.transfer = function () {
+        $scope.transfer = async () => {
             $scope.openView('write-mail', 'main');
-            $scope.newItem.parentConversation = $scope.mail;
-            $scope.newItem.setMailContent($scope.mail, 'transfer');
+            const mail = $scope.newItem as Mail;
+            mail.parentConversation = $scope.mail;
+            await mail.setMailContent($scope.mail, 'transfer', $compile, $sanitize, $scope);
             conversation.folders.draft.transfer($scope.newItem);
+            $scope.$apply();
         };
 
-        $scope.reply = function () {
+        $scope.reply = async () => {
             $scope.openView('write-mail', 'main');
-            $scope.newItem.parentConversation = $scope.mail;
-            $scope.newItem.setMailContent($scope.mail, 'reply');
+            const mail = $scope.newItem as Mail;
+            mail.parentConversation = $scope.mail;
+            await mail.setMailContent($scope.mail, 'reply', $compile, $sanitize, $scope);
             $scope.addUser($scope.mail.sender());
+            $scope.$apply();
         };
 
-        $scope.replyAll = function () {
+        $scope.replyAll = async () => {
             $scope.openView('write-mail', 'main');
-            $scope.newItem.parentConversation = $scope.mail;
-            $scope.newItem.setMailContent($scope.mail,'reply', true);
-            $scope.newItem.to = _.filter($scope.newItem.to, function (user) { return user.id !== model.me.userId })
-            $scope.newItem.cc = _.filter($scope.newItem.cc, function (user) {
+            const mail = $scope.newItem as Mail;
+            mail.parentConversation = $scope.mail;
+            await mail.setMailContent($scope.mail,'reply', $compile, $sanitize, $scope, true);
+            mail.to = _.filter($scope.newItem.to, function (user) { return user.id !== model.me.userId })
+            mail.cc = _.filter($scope.newItem.cc, function (user) {
                 return user.id !== model.me.userId && !_.findWhere($scope.newItem.to, { id: user.id })
             })
-            if (!_.findWhere($scope.newItem.to, { id: $scope.mail.sender().id }))
+            if (!_.findWhere($scope.newItem.to, { id: $scope.mail.sender().id })){
                 $scope.addUser($scope.mail.sender());
+            }
+            $scope.$apply();
         };
 
         $scope.editDraft = function (draft) {
@@ -458,7 +465,7 @@ export let conversationController = ng.controller('ConversationController', [
         }
 
         var letterIcon = document.createElement("img")
-        letterIcon.src = skin.theme + ".." + "/img/icons/message-icon.png"
+        letterIcon.src = skin.theme + "../../img/icons/message-icon.png"
         $scope.drag = function (item, $originalEvent) {
             $originalEvent.dataTransfer.setDragImage(letterIcon, 0, 0);
             try {

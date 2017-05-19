@@ -1,6 +1,7 @@
 ﻿import { Collection, Model, http, model, notify, idiom as lang } from 'entcore/entcore';
 import { moment } from 'entcore/libs/moment/moment';
 import { _ } from 'entcore/libs/underscore/underscore';
+import { $ } from 'entcore/libs/jquery/jquery';
 
 import { User } from './user';
 import { conversation } from './conversation';
@@ -48,7 +49,7 @@ export class Mail extends Model {
         this.attachments = [];
     }
 
-    setMailContent(origin: Mail, mailType: string, copyReceivers?: boolean) {
+    setMailContent(origin: Mail, mailType: string, compile, sanitize, $scope, copyReceivers?: boolean): Promise<any> {
         if (origin.subject.indexOf(format[mailType].prefix) === -1) {
             this.subject = lang.translate(format[mailType].prefix) + origin.subject;
         }
@@ -60,7 +61,19 @@ export class Mail extends Model {
             this.cc = origin.cc;
             this.to = origin.to;
         }
-        this.body = format[mailType].content + '<blockquote>' + origin.body + '</blockquote>';
+
+        return new Promise((resolve, reject) => {
+            this.body = format[mailType].content + '<blockquote>' + origin.body + '</blockquote>';
+            const tempElement = compile(format[mailType].content)($scope)
+            setTimeout(function(){
+                this.body = sanitize(
+                    $(document.createElement('div')).append(tempElement)[0].outerHTML +
+                    '<blockquote>' + this.body + '</blockquote>'
+                );
+                tempElement.remove()
+                resolve();
+            }, 0)
+        });
     }
 
     sentDate() {
@@ -142,7 +155,7 @@ export class Mail extends Model {
             }
             var inactives = '';
             result.inactive.forEach(function (name) {
-                inactives += name + lang.translate('invalid') + '<br />';
+                inactives += name + ' ' + lang.translate('invalid') + '<br />';
             });
             if (result.inactive.length > 0) {
                 notify.info(inactives);
