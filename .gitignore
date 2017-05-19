@@ -20,8 +20,8 @@ test-tmp
 *.class
 mods
 */mods
-*/temp
-dist
+**/temp
+**/dist
 **/ts/entcore
 **/template/entcore
 **/entcore-css-lib

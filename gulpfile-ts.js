@@ -38,13 +38,13 @@ function compileTs(){
 function startWebpackEntcore(isLocal) {
     var streams = [];
     apps.forEach(a => {
-        var str = gulp.src('./' + a + '.src/main/resources/public')
+        var str = gulp.src('./' + a + '.src/main/resources/public/**/*.js')
             .pipe(webpack(require('./' + a + '/webpack-entcore.config.js')))
             .pipe(gulp.dest('./' + a + '/src/main/resources/public/dist/entcore'))
             .pipe(rev())
             .pipe(gulp.dest('./' + a + '/src/main/resources/public/dist/entcore'))
-            .pipe(rev.manifest({ merge: true }))
-            .pipe(gulp.dest('./' + a + '/'));
+            .pipe(rev.manifest('./' + a + '/rev-manifest.json', { merge: true }))
+            .pipe(gulp.dest('./'));
         streams.push(str);
     });
 
@@ -54,13 +54,13 @@ function startWebpackEntcore(isLocal) {
 function startWebpack(isLocal) {
     var streams = [];
     apps.forEach(a => {
-        var str = gulp.src('./' + a + '/src/main/resources/public')
+        var str = gulp.src('./' + a + '/src/main/resources/public/**/*.js')
             .pipe(webpack(require('./' + a + '/webpack.config.js')))
             .pipe(gulp.dest('./' + a + '/src/main/resources/public/dist'))
             .pipe(rev())
             .pipe(gulp.dest('./' + a + '/src/main/resources/public/dist'))
-            .pipe(rev.manifest())
-            .pipe(gulp.dest('./' + a + '/'));
+            .pipe(rev.manifest('./' + a + '/rev-manifest.json', { merge: true }))
+            .pipe(gulp.dest('./'));
         streams.push(str);
     });
 
@@ -71,7 +71,7 @@ function updateRefs() {
     var streams = [];
     apps.forEach(a => {
         var str = gulp.src('./' + a + '/src/main/resources/view-src/**/*.html')
-            .pipe(revReplace({manifest: gulp.src('./' + a + 'rev-manifest.json') }))
+            .pipe(revReplace({manifest: gulp.src('./' + a + '/rev-manifest.json') }))
             .pipe(gulp.dest('./' + a + '/src/main/resources/view'));
         streams.push(str);
     });

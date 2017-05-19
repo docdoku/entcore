@@ -21,3 +21,5 @@ ng.controllers.push(activationController);
 ng.controllers.push(forgotController);
 ng.controllers.push(resetController);
 ng.controllers.push(loginController);
+
+console.log('app');

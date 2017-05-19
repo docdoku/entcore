@@ -42,12 +42,12 @@
 /************************************************************************/
 /******/ ([
 /* 0 */
-/***/ function(module, exports) {
+/***/ (function(module, exports) {
 
 	Behaviours.register('auth', {});
 	
 
 
-/***/ }
+/***/ })
 /******/ ]);
 //# sourceMappingURL=behaviours.js.map
