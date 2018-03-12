@@ -1968,7 +1968,7 @@ calendar.Calendar.prototype.addScheduleItems = function(items) {
   var schedule = this;
   items
     .filter(function(item) {
-      return moment(item.end).isSame(schedule.firstDay, schedule.increment);
+      return moment(item.end._d).isSame(schedule.firstDay._d, schedule.increment);
     })
     .forEach(function(item) {
       var startDay = moment(item.beginning);
@@ -1979,8 +1979,9 @@ calendar.Calendar.prototype.addScheduleItems = function(items) {
         if (
           startDay.isBefore(refDay.clone().endOf('day')) &&
           endDay.isAfter(refDay.clone().startOf('day'))
-        )
+        ) {
           day.scheduleItems.push(item);
+        }
         refDay.add('day', 1);
       });
     });
