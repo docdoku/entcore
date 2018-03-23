@@ -1716,13 +1716,17 @@ calendar.Calendar.prototype.setIncrement = function(incr) {
 	}
 
 	this.increment = incr;
-	this.setDate(this.firstDay);
+	this.setDate();
 
 	return this.firstDay;
 };
 
 calendar.Calendar.prototype.setDate = function(momentDate){
-	this.firstDay = moment(momentDate).startOf(this.increment);
+	if (momentDate) {
+    this.firstDay = moment(momentDate).startOf(this.increment);
+	} else {
+    this.firstDay = moment().startOf(this.increment);
+	}
 	this.days.sync();
 	this.trigger('date-change');
 };

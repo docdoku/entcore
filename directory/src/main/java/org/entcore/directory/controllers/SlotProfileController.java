@@ -7,7 +7,9 @@ import fr.wseduc.webutils.Either;
 import fr.wseduc.webutils.I18n;
 import fr.wseduc.webutils.http.Renders;
 import fr.wseduc.webutils.request.RequestUtils;
+import org.entcore.common.http.filter.AdminFilter;
 import org.entcore.common.http.filter.IgnoreCsrf;
+import org.entcore.common.http.filter.ResourceFilter;
 import org.entcore.common.mongodb.MongoDbControllerHelper;
 import org.entcore.common.user.UserInfos;
 import org.entcore.common.user.UserUtils;
@@ -45,7 +47,8 @@ public class SlotProfileController extends MongoDbControllerHelper {
     @Post("/slotprofiles")
     @ApiDoc("Create a slot profile")
     @IgnoreCsrf
-    @SecuredAction(value = "directory.slot.manage")
+    @SecuredAction(value = "", type = ActionType.RESOURCE)
+    @ResourceFilter(AdminFilter.class)
     public void createSlotProfile(final HttpServerRequest request) {
 
         UserUtils.getUserInfos(eb, request, new Handler<UserInfos>() {
@@ -72,7 +75,8 @@ public class SlotProfileController extends MongoDbControllerHelper {
     @Put("/slotprofiles/:idSlotProfile")
     @ApiDoc("Update a slot profile")
     @IgnoreCsrf
-    @SecuredAction(value = "directory.slot.manage")
+    @SecuredAction(value = "", type = ActionType.RESOURCE)
+    @ResourceFilter(AdminFilter.class)
     public void updateSlotProfile(final HttpServerRequest request) {
         UserUtils.getUserInfos(eb, request, new Handler<UserInfos>() {
             @Override
@@ -130,7 +134,8 @@ public class SlotProfileController extends MongoDbControllerHelper {
     @Post("/slotprofiles/:idSlotProfile/slots")
     @ApiDoc("Create a slot for a given slot profile")
     @IgnoreCsrf
-    @SecuredAction(value = "directory.slot.manage")
+    @SecuredAction(value = "", type = ActionType.RESOURCE)
+    @ResourceFilter(AdminFilter.class)
     public void createSlot(final HttpServerRequest request) {
         UserUtils.getUserInfos(eb, request, new Handler<UserInfos>() {
             @Override
@@ -206,7 +211,8 @@ public class SlotProfileController extends MongoDbControllerHelper {
     @ApiDoc("Update a given slot for a given slot profile")
     @Put("/slotprofiles/:idSlotProfile/slots/:idSlot")
     @IgnoreCsrf
-    @SecuredAction(value = "directory.slot.manage")
+    @SecuredAction(value = "", type = ActionType.RESOURCE)
+    @ResourceFilter(AdminFilter.class)
     public void updateSlot(final HttpServerRequest request) {
         UserUtils.getUserInfos(eb, request, new Handler<UserInfos>() {
             @Override
@@ -281,7 +287,8 @@ public class SlotProfileController extends MongoDbControllerHelper {
     @ApiDoc("Delete a given slot for a given slot profile")
     @Delete("/slotprofiles/:idSlotProfile/slots/:idSlot")
     @IgnoreCsrf
-    @SecuredAction(value = "directory.slot.manage")
+    @SecuredAction(value = "", type = ActionType.RESOURCE)
+    @ResourceFilter(AdminFilter.class)
     public void deleteSlotFromSlotProfile(final HttpServerRequest request) {
         UserUtils.getUserInfos(eb, request, new Handler<UserInfos>() {
             @Override
